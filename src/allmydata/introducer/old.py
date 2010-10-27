@@ -1,4 +1,15 @@
 
+import time
+from base64 import b32decode
+from zope.interface import implements, Interface
+from twisted.application import service
+import allmydata
+from allmydata.interfaces import InsufficientVersionError
+from allmydata.util import log, idlib, rrefutil
+from foolscap.api import StringConstraint, TupleOf, SetOf, DictOf, Any, \
+    RemoteInterface, Referenceable, eventually, SturdyRef
+FURL = StringConstraint(1000)
+
 # We keep a copy of the old introducer (both client and server) here to
 # support compatibility tests. The old client is supposed to handle the new
 # server, and new client is supposed to handle the old server.
@@ -181,7 +192,7 @@ class IntroducerClient_v1(service.Service, Referenceable):
                     { },
                     "application-version": "unknown: no get_version()",
                     }
-        d = add_version_to_remote_reference(publisher, default)
+        d = rrefutil.add_version_to_remote_reference(publisher, default)
         d.addCallback(self._got_versioned_introducer)
         d.addErrback(self._got_error)
 
@@ -237,7 +248,7 @@ class IntroducerClient_v1(service.Service, Referenceable):
                 # duplicate requests.
                 self._subscriptions.add(service_name)
                 d = self._publisher.callRemote("subscribe", self, service_name)
-                d.addErrback(trap_deadref)
+                d.addErrback(rrefutil.trap_deadref)
                 d.addErrback(log.err, format="server errored during subscribe",
                              facility="tahoe.introducer",
                              level=log.WEIRD, umid="2uMScQ")
@@ -250,7 +261,7 @@ class IntroducerClient_v1(service.Service, Referenceable):
         for ann in self._published_announcements:
             self._debug_counts["outbound_message"] += 1
             d = self._publisher.callRemote("publish", ann)
-            d.addErrback(trap_deadref)
+            d.addErrback(rrefutil.trap_deadref)
             d.addErrback(log.err,
                          format="server errored during publish %(ann)s",
                          ann=ann, facility="tahoe.introducer",

@@ -1,14 +1,15 @@
 
 import time, os.path
-from base64 import b32decode
 from zope.interface import implements
 from twisted.application import service
-from foolscap.api import Referenceable, SturdyRef
+from foolscap.api import Referenceable
 import allmydata
 from allmydata import node
-from allmydata.util import log, rrefutil
+from allmydata.util import log, base32, idlib
 from allmydata.introducer.interfaces import \
-     RIIntroducerPublisherAndSubscriberService
+     RIIntroducerPublisherAndSubscriberService_v2
+from allmydata.introducer.common import convert_announcement_v1_to_v2, \
+     convert_announcement_v2_to_v1, unsign, make_index
 
 class IntroducerNode(node.Node):
     PORTNUMFILE = "introducer.port"
@@ -145,6 +146,7 @@ class IntroducerService(service.MultiService, Referenceable):
         ann_d, key = unsign(ann_s) # might raise BadSignatureError
         index = make_index(ann_d, key)
 
+        service_name = str(ann_d["service-name"])
         if service_name == "stub_client": # for_v1
             # There might be a v1 subscriber for whom this is a stub_client.
             # We might have received the subscription before the stub_client
@@ -154,6 +156,7 @@ class IntroducerService(service.MultiService, Referenceable):
             # record it for later, in case the stub_client arrived before the
             # subscription
             subscriber_info = self._get_subscriber_info_from_ann_d(ann_d)
+            ann_tubid = index[0]
             self._stub_client_announcements[ann_tubid] = subscriber_info
 
             lp2 = self.log("stub_client announcement, "
@@ -172,7 +175,7 @@ class IntroducerService(service.MultiService, Referenceable):
                     # found a match. Does it need info?
                     if not info[0]:
                         self.log(format="replacing info",
-                                 level=log.NOISY, parent=lp2, umid="m5kxwA"
+                                 level=log.NOISY, parent=lp2, umid="m5kxwA")
                         # yup
                         s[subscriber] = (subscriber_info, info[1])
             # and we don't remember or announce stub_clients beyond what we
@@ -203,7 +206,7 @@ class IntroducerService(service.MultiService, Referenceable):
             d = s.callRemote("announce_v2", set([ann_s]))
             d.addErrback(log.err,
                          format="subscriber errored on announcement %(ann)s",
-                         ann=announcement, facility="tahoe.introducer",
+                         ann=ann_s, facility="tahoe.introducer",
                          level=log.UNUSUAL, umid="jfGMXQ")
 
     def _get_subscriber_info_from_ann_d(self, ann_d): # for_v1

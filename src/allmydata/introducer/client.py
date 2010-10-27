@@ -1,30 +1,16 @@
 
-from base64 import b32decode
+import time, simplejson
 from zope.interface import implements
 from twisted.application import service
-from foolscap.api import Referenceable, SturdyRef, eventually
+from foolscap.api import Referenceable, eventually, RemoteInterface, Violation
 from allmydata.interfaces import InsufficientVersionError
-from allmydata.introducer.interfaces import RIIntroducerSubscriberClient, \
-     IIntroducerClient
+from allmydata.introducer.interfaces import IIntroducerClient, \
+     RIIntroducerSubscriberClient_v1, RIIntroducerSubscriberClient_v2
+from almydata.introducer.common import sign, unsign, make_index, \
+     convert_announcement_v1_to_v2, convert_announcement_v2_to_v1
 from allmydata.util import log, idlib
-from allmydata.util.rrefutil import add_version_to_remote_reference, trap_deadref
-
-def sign(ann_d, sk):
-    msg = simplejson.dumps(ann_d)
-    if not sk:
-        return (msg, None, None)
-    vk = sk.get_verifying_key()
-    return (msg, sk.sign(msg).encode("hex"), vk.to_string().encode("hex"))
-
-def unsign(ann_s):
-    (msg_s, sig, key_s) = simplejson.loads(ann_s)
-    key = None
-    if sig_s and key_s:
-        key = VerifyingKey.from_string(key_s)
-        sig = sig_s.decode("hex")
-        key.verify(msg_s, sig)
-    msg = simplejson.loads(msg_s)
-    return (msg, key)
+from allmydata.util.rrefutil import add_version_to_remote_reference
+from allmydata.util.ecdsa import BadSignatureError
 
 class ClientAdapter_v1(Referenceable): # for_v1
     """I wrap a v2 IntroducerClient to make it look like a v1 client, so it
@@ -57,7 +43,7 @@ class StubClient(Referenceable): # for_v1
 
 
 class IntroducerClient(service.Service, Referenceable):
-    implements(RIIntroducerSubscriberClient, IIntroducerClient)
+    implements(RIIntroducerSubscriberClient_v2, IIntroducerClient)
 
     def __init__(self, tub, introducer_furl,
                  nickname, my_version, oldest_supported,
@@ -254,7 +240,7 @@ class IntroducerClient(service.Service, Referenceable):
             self.announcement_counter += 1
             try:
                 ann_d, key = unsign(ann_s) # might raise bad-sig error
-            except BADSIGERROR??:
+            except BadSignatureError:
                 self.log("bad signature on inbound announcement: %s" % (ann_s,),
                          parent=lp, level=log.WEIRD, umid="ZAU15Q")
                 # process other announcements that arrived with the bad one
@@ -275,6 +261,7 @@ class IntroducerClient(service.Service, Referenceable):
                        nick=nick_s, svc=service_name, ann=ann_d, umid="BoKEag")
 
         index = make_index(ann_d, key)
+        nodeid_s = idlib.nodeid_b2a(index[0])
         self._received_nicknames[index[0]] = ann_d["nickname"]
 
         # is this announcement a duplicate?

@@ -1,4 +1,8 @@
 
+import re, simplejson
+from base64 import b32decode
+from allmydata.util.ecdsa import VerifyingKey
+
 def make_index(ann_d, key):
     """Return something that can be used as an index (e.g. a tuple of
     strings), such that two chains that refer to the same 'thing' will
@@ -50,3 +54,20 @@ def convert_announcement_v2_to_v1(ann_v2):
              )
     return ann_t
 
+
+def sign(ann_d, sk):
+    msg = simplejson.dumps(ann_d)
+    if not sk:
+        return (msg, None, None)
+    vk = sk.get_verifying_key()
+    return (msg, sk.sign(msg).encode("hex"), vk.to_string().encode("hex"))
+
+def unsign(ann_s):
+    (msg_s, sig_s, key_s) = simplejson.loads(ann_s)
+    key = None
+    if sig_s and key_s:
+        key = VerifyingKey.from_string(key_s)
+        sig = sig_s.decode("hex")
+        key.verify(msg_s, sig)
+    msg = simplejson.loads(msg_s)
+    return (msg, key)
