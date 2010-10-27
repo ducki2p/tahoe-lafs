@@ -6,7 +6,7 @@ from foolscap.api import Referenceable, eventually, RemoteInterface, Violation
 from allmydata.interfaces import InsufficientVersionError
 from allmydata.introducer.interfaces import IIntroducerClient, \
      RIIntroducerSubscriberClient_v1, RIIntroducerSubscriberClient_v2
-from almydata.introducer.common import sign, unsign, make_index, \
+from allmydata.introducer.common import sign, unsign, make_index, \
      convert_announcement_v1_to_v2, convert_announcement_v2_to_v1
 from allmydata.util import log, idlib
 from allmydata.util.rrefutil import add_version_to_remote_reference
@@ -237,7 +237,6 @@ class IntroducerClient(service.Service, Referenceable):
     def got_announcements(self, announcements, lp=None):
         # this is the common entry point for both v1 and v2 announcements
         for ann_s in announcements:
-            self.announcement_counter += 1
             try:
                 ann_d, key = unsign(ann_s) # might raise bad-sig error
             except BadSignatureError:
@@ -261,8 +260,8 @@ class IntroducerClient(service.Service, Referenceable):
                        nick=nick_s, svc=service_name, ann=ann_d, umid="BoKEag")
 
         index = make_index(ann_d, key)
-        nodeid_s = idlib.nodeid_b2a(index[0])
-        self._received_nicknames[index[0]] = ann_d["nickname"]
+        nodeid = index[0]
+        nodeid_s = idlib.nodeid_b2a(nodeid)
 
         # is this announcement a duplicate?
         if self._current_announcements.get(index, [None]*3)[0] == ann_d:

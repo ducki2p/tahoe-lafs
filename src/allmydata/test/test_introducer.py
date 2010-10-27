@@ -9,7 +9,7 @@ from twisted.python import log
 from foolscap.api import Tub, Referenceable, fireEventually, flushEventualQueue
 from twisted.application import service
 from allmydata.interfaces import InsufficientVersionError
-from allmydata.introducer.client import IntroducerClient
+from allmydata.introducer.client import IntroducerClient, ClientAdapter_v1
 from allmydata.introducer.server import IntroducerService
 # test compatibility with old introducer .tac files
 from allmydata.introducer import IntroducerNode
@@ -47,14 +47,14 @@ class Introducer(ServiceMixin, unittest.TestCase, pollmixin.PollMixin):
 
     def test_create(self):
         ic = IntroducerClient(None, "introducer.furl", u"my_nickname",
-                              "my_version", "oldest_version")
+                              "my_version", "oldest_version", {})
         self.failUnless(isinstance(ic, IntroducerClient))
 
     def test_listen(self):
         i = IntroducerService()
         i.setServiceParent(self.parent)
 
-    def test_duplicate(self):
+    def test_duplicate_publish(self):
         i = IntroducerService()
         self.failUnlessEqual(len(i.get_announcements()), 0)
         self.failUnlessEqual(len(i.get_subscribers()), 0)
@@ -72,6 +72,169 @@ class Introducer(ServiceMixin, unittest.TestCase, pollmixin.PollMixin):
         i.remote_publish(ann1b)
         self.failUnlessEqual(len(i.get_announcements()), 2)
         self.failUnlessEqual(len(i.get_subscribers()), 0)
+
+
+
+class Client(unittest.TestCase):
+    def test_duplicate_receive_v1(self):
+        ic = IntroducerClient(None,
+                              "introducer.furl", u"my_nickname",
+                              "my_version", "oldest_version", {})
+        announcements = []
+        ic.subscribe_to("storage",
+                        lambda nodeid,ann_d: announcements.append(ann_d))
+        furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:36106/gydnpigj2ja2qr2srq4ikjwnl7xfgbra"
+        ann1 = (furl1, "storage", "RIStorage", "nick1", "ver23", "ver0")
+        ann1b = (furl1, "storage", "RIStorage", "nick1", "ver24", "ver0")
+        ca = ClientAdapter_v1(ic)
+
+        ca.remote_announce([ann1])
+        d = fireEventually()
+        def _then(ign):
+            self.failUnlessEqual(len(announcements), 1)
+            self.failUnlessEqual(announcements[0]["nickname"], u"nick1")
+            self.failUnlessEqual(announcements[0]["my-version"], "ver23")
+            self.failUnlessEqual(ic._debug_counts["inbound_announcement"], 1)
+            self.failUnlessEqual(ic._debug_counts["new_announcement"], 1)
+            self.failUnlessEqual(ic._debug_counts["update"], 0)
+            self.failUnlessEqual(ic._debug_counts["duplicate_announcement"], 0)
+            # now send a duplicate announcement: this should not notify clients
+            ca.remote_announce([ann1])
+            return fireEventually()
+        d.addCallback(_then)
+        def _then2(ign):
+            self.failUnlessEqual(len(announcements), 1)
+            self.failUnlessEqual(ic._debug_counts["inbound_announcement"], 2)
+            self.failUnlessEqual(ic._debug_counts["new_announcement"], 1)
+            self.failUnlessEqual(ic._debug_counts["update"], 0)
+            self.failUnlessEqual(ic._debug_counts["duplicate_announcement"], 1)
+            # and a replacement announcement: same FURL, new other stuff.
+            # Clients should be notified.
+            ca.remote_announce([ann1b])
+            return fireEventually()
+        d.addCallback(_then2)
+        def _then3(ign):
+            self.failUnlessEqual(len(announcements), 2)
+            self.failUnlessEqual(ic._debug_counts["inbound_announcement"], 3)
+            self.failUnlessEqual(ic._debug_counts["new_announcement"], 1)
+            self.failUnlessEqual(ic._debug_counts["update"], 1)
+            self.failUnlessEqual(ic._debug_counts["duplicate_announcement"], 1)
+            # test that the other stuff changed
+            self.failUnlessEqual(announcements[-1]["nickname"], u"nick1")
+            self.failUnlessEqual(announcements[-1]["my-version"], "ver24")
+        d.addCallback(_then3)
+        return d
+
+    def test_duplicate_receive_v2(self):
+        ic1 = IntroducerClient(None,
+                               "introducer.furl", "my_nickname",
+                               "ver23", "oldest_version", {})
+        # we use a second client just to create a different-looking
+        # announcement
+        ic2 = IntroducerClient(None,
+                               "introducer.furl", "my_nickname",
+                               "ver24","oldest_version",{})
+        ic1.subscribe_to("storage")
+        furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:36106/gydnp"
+        furl1a = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:7777/gydnp"
+        furl2 = "pb://ttwwooyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:36106/ttwwoo"
+
+        privkey_vs, pubkey_vs = make_keypair()
+        blesser_privkey_vs, blesser_pubkey_vs = make_keypair()
+        blesser = bless.PrivateKeyBlesser(privkey_vs, blesser_privkey_vs)
+
+        # ann1: ic1, furl1
+        # ann1a: ic1, furl1a (same SturdyRef, different connection hints)
+        # ann1b: ic2, furl1
+        # ann2: ic2, furl2
+
+        d = ic1.create_announcement(furl1, "storage", "RIStorage", blesser)
+        def _created1(ann1):
+            self.ann1 = ann1
+            return ic1.create_announcement(furl1a, "storage", "RIStorage",
+                                           blesser)
+        d.addCallback(_created1)
+        def _created1a(ann1a):
+            self.ann1a = ann1a
+            return ic2.create_announcement(furl1, "storage", "RIStorage",
+                                           blesser)
+        d.addCallback(_created1a)
+        def _created1b(ann1b):
+            self.ann1b = ann1b
+            return ic2.create_announcement(furl2, "storage", "RIStorage",
+                                           blesser)
+        d.addCallback(_created1b)
+        def _created2(ann2):
+            self.ann2 = ann2
+        d.addCallback(_created2)
+
+        def _ready(res):
+            ic1.remote_announce_v2([self.ann1])
+            connectors = ic1._connectors.values()
+            self.failUnlessEqual(len(connectors), 1)
+            c = connectors[0]
+            self.failUnless(c.started)
+            self.failIf(c.stopped)
+            self.failIf(c.disconnected)
+            self.failUnlessEqual(c.furl, furl1)
+            s = ic1.get_all_services()
+            self.failUnlessEqual(len(s), 1)
+            bo = s[0]["blessed_announcement"].get_leaf()
+            self.failUnlessEqual(bo["my-version"], "ver23")
+
+            # now send a duplicate announcement
+            ic1.remote_announce_v2([self.ann1])
+            connectors = ic1._connectors.values()
+            self.failUnlessEqual(len(connectors), 1)
+            self.failUnlessIdentical(connectors[0], c)
+            self.failUnless(c.started)
+            self.failIf(c.stopped)
+            self.failIf(c.disconnected)
+            self.failUnlessEqual(c.furl, furl1)
+            s = ic1.get_all_services()
+            self.failUnlessEqual(len(s), 1)
+            bo = s[0]["blessed_announcement"].get_leaf()
+            self.failUnlessEqual(bo["my-version"], "ver23")
+
+            # and a replacement announcement: same FURL, new other stuff.
+            # Since the FURL hasn't changed, the connector should remain the
+            # same
+            ic1.remote_announce_v2([self.ann1b])
+            connectors = ic1._connectors.values()
+            self.failUnlessEqual(len(connectors), 1)
+            self.failUnlessIdentical(connectors[0], c)
+            self.failUnless(c.started)
+            self.failIf(c.stopped)
+            self.failIf(c.disconnected)
+            self.failUnlessEqual(c.furl, furl1)
+            # test that the other stuff changed
+            s = ic1.get_all_services()
+            self.failUnlessEqual(len(s), 1)
+            bo = s[0]["blessed_announcement"].get_leaf()
+            self.failUnlessEqual(bo["my-version"], "ver24")
+
+            # and a replacement announcement with a FURL that uses different
+            # connection hints. The old connector should be replaced with a
+            # new one.
+            ic1.remote_announce_v2([self.ann1a])
+            connectors = ic1._connectors.values()
+            self.failUnlessEqual(len(connectors), 1)
+            c2 = connectors[0]
+            self.failIfIdentical(c, c2)
+            self.failUnless(c.started)
+            self.failUnless(c.stopped)
+            self.failUnlessEqual(c.furl, furl1)
+            self.failUnless(c2.started)
+            self.failIf(c2.stopped)
+            self.failUnlessEqual(c2.furl, furl1a)
+            # test that the other stuff didn't change
+            s = ic1.get_all_services()
+            self.failUnlessEqual(len(s), 1)
+            bo = s[0]["blessed_announcement"].get_leaf()
+            self.failUnlessEqual(bo["my-version"], "ver23")
+
+        d.addCallback(_ready)
+        return d
 
 class SystemTestMixin(ServiceMixin, pollmixin.PollMixin):
 
@@ -129,7 +292,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
 
             log.msg("creating client %d: %s" % (i, tub.getShortTubID()))
             c = IntroducerClient(tub, self.introducer_furl, u"nickname-%d" % i,
-                                 "version", "oldest")
+                                 "version", "oldest", {})
             received_announcements[c] = {}
             def got(serverid, ann_d, announcements):
                 announcements[serverid] = ann_d
@@ -359,7 +522,7 @@ class NonV1Server(SystemTestMixin, unittest.TestCase):
         tub.setLocation("localhost:%d" % portnum)
 
         c = IntroducerClient(tub, self.introducer_furl,
-                             u"nickname-client", "version", "oldest")
+                             u"nickname-client", "version", "oldest", {})
         announcements = {}
         def got(serverid, ann_d):
             announcements[serverid] = ann_d
