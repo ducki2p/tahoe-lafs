@@ -134,11 +134,16 @@ class Client(unittest.TestCase):
         ic2 = IntroducerClient(None,
                                "introducer.furl", "my_nickname",
                                "ver24","oldest_version",{})
-        ic1.subscribe_to("storage")
+        announcements = []
+        ic1.subscribe_to("storage",
+                         lambda nodeid,ann_d: announcements.append(ann_d))
         furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:36106/gydnp"
         furl1a = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:7777/gydnp"
         furl2 = "pb://ttwwooyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:36106/ttwwoo"
 
+        privkey = SigningKey()
+        pubkey = privkey.get_verifying_key()
+        .....
         privkey_vs, pubkey_vs = make_keypair()
         blesser_privkey_vs, blesser_pubkey_vs = make_keypair()
         blesser = bless.PrivateKeyBlesser(privkey_vs, blesser_privkey_vs)
@@ -148,7 +153,7 @@ class Client(unittest.TestCase):
         # ann1b: ic2, furl1
         # ann2: ic2, furl2
 
-        d = ic1.create_announcement(furl1, "storage", "RIStorage", blesser)
+        d = ic1.create_announcement(furl1, "storage", "RIStorage", privkey)
         def _created1(ann1):
             self.ann1 = ann1
             return ic1.create_announcement(furl1a, "storage", "RIStorage",
