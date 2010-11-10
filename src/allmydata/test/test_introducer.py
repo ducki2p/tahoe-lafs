@@ -13,7 +13,7 @@ from allmydata.introducer.client import IntroducerClient, ClientAdapter_v1
 from allmydata.introducer.server import IntroducerService
 # test compatibility with old introducer .tac files
 from allmydata.introducer import IntroducerNode
-from allmydata.util import pollmixin
+from allmydata.util import pollmixin, ecdsa
 import allmydata.test.common_util as testutil
 
 class LoggingMultiService(service.MultiService):
@@ -127,118 +127,96 @@ class Client(unittest.TestCase):
 
     def test_duplicate_receive_v2(self):
         ic1 = IntroducerClient(None,
-                               "introducer.furl", "my_nickname",
+                               "introducer.furl", u"my_nickname",
                                "ver23", "oldest_version", {})
         # we use a second client just to create a different-looking
         # announcement
         ic2 = IntroducerClient(None,
-                               "introducer.furl", "my_nickname",
+                               "introducer.furl", u"my_nickname",
                                "ver24","oldest_version",{})
         announcements = []
-        ic1.subscribe_to("storage",
-                         lambda nodeid,ann_d: announcements.append(ann_d))
+        def _received(nodeid, ann_d):
+            announcements.append( (nodeid, ann_d) )
+        ic1.subscribe_to("storage", _received)
         furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:36106/gydnp"
         furl1a = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:7777/gydnp"
         furl2 = "pb://ttwwooyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:36106/ttwwoo"
 
-        privkey = SigningKey()
+        privkey = ecdsa.SigningKey.generate()
         pubkey = privkey.get_verifying_key()
-        .....
-        privkey_vs, pubkey_vs = make_keypair()
-        blesser_privkey_vs, blesser_pubkey_vs = make_keypair()
-        blesser = bless.PrivateKeyBlesser(privkey_vs, blesser_privkey_vs)
+        pubkey_hex = pubkey.to_string().encode("hex")
 
         # ann1: ic1, furl1
         # ann1a: ic1, furl1a (same SturdyRef, different connection hints)
         # ann1b: ic2, furl1
         # ann2: ic2, furl2
 
-        d = ic1.create_announcement(furl1, "storage", "RIStorage", privkey)
-        def _created1(ann1):
-            self.ann1 = ann1
-            return ic1.create_announcement(furl1a, "storage", "RIStorage",
-                                           blesser)
-        d.addCallback(_created1)
-        def _created1a(ann1a):
-            self.ann1a = ann1a
-            return ic2.create_announcement(furl1, "storage", "RIStorage",
-                                           blesser)
-        d.addCallback(_created1a)
-        def _created1b(ann1b):
-            self.ann1b = ann1b
-            return ic2.create_announcement(furl2, "storage", "RIStorage",
-                                           blesser)
-        d.addCallback(_created1b)
-        def _created2(ann2):
-            self.ann2 = ann2
-        d.addCallback(_created2)
+        self.ann1 = ic1.create_announcement(furl1, "storage", "RIStorage",
+                                            privkey)
+        self.ann1a =  ic1.create_announcement(furl1a, "storage", "RIStorage",
+                                              privkey)
+        self.ann1b = ic2.create_announcement(furl1, "storage", "RIStorage",
+                                             privkey)
+        self.ann2 = ic2.create_announcement(furl2, "storage", "RIStorage",
+                                            privkey)
 
-        def _ready(res):
-            ic1.remote_announce_v2([self.ann1])
-            connectors = ic1._connectors.values()
-            self.failUnlessEqual(len(connectors), 1)
-            c = connectors[0]
-            self.failUnless(c.started)
-            self.failIf(c.stopped)
-            self.failIf(c.disconnected)
-            self.failUnlessEqual(c.furl, furl1)
-            s = ic1.get_all_services()
-            self.failUnlessEqual(len(s), 1)
-            bo = s[0]["blessed_announcement"].get_leaf()
-            self.failUnlessEqual(bo["my-version"], "ver23")
+        ic1.remote_announce_v2([self.ann1]) # queues eventual-send
+        d = fireEventually()
+        def _then1(ign):
+            self.failUnlessEqual(len(announcements), 1)
+            nodeid,ann_d = announcements[0]
+            self.failUnlessEqual(nodeid.encode("hex"), pubkey_hex)
+            self.failUnlessEqual(ann_d["FURL"], furl1)
+            self.failUnlessEqual(ann_d["my-version"], "ver23")
+        d.addCallback(_then1)
 
-            # now send a duplicate announcement
-            ic1.remote_announce_v2([self.ann1])
-            connectors = ic1._connectors.values()
-            self.failUnlessEqual(len(connectors), 1)
-            self.failUnlessIdentical(connectors[0], c)
-            self.failUnless(c.started)
-            self.failIf(c.stopped)
-            self.failIf(c.disconnected)
-            self.failUnlessEqual(c.furl, furl1)
-            s = ic1.get_all_services()
-            self.failUnlessEqual(len(s), 1)
-            bo = s[0]["blessed_announcement"].get_leaf()
-            self.failUnlessEqual(bo["my-version"], "ver23")
+        # now send a duplicate announcement. This should not fire the
+        # subscriber
+        d.addCallback(lambda ign: ic1.remote_announce_v2([self.ann1]))
+        d.addCallback(fireEventually)
+        def _then2(ign):
+            self.failUnlessEqual(len(announcements), 1)
+        d.addCallback(_then2)
 
-            # and a replacement announcement: same FURL, new other stuff.
-            # Since the FURL hasn't changed, the connector should remain the
-            # same
-            ic1.remote_announce_v2([self.ann1b])
-            connectors = ic1._connectors.values()
-            self.failUnlessEqual(len(connectors), 1)
-            self.failUnlessIdentical(connectors[0], c)
-            self.failUnless(c.started)
-            self.failIf(c.stopped)
-            self.failIf(c.disconnected)
-            self.failUnlessEqual(c.furl, furl1)
-            # test that the other stuff changed
-            s = ic1.get_all_services()
-            self.failUnlessEqual(len(s), 1)
-            bo = s[0]["blessed_announcement"].get_leaf()
-            self.failUnlessEqual(bo["my-version"], "ver24")
+        # and a replacement announcement: same FURL, new other stuff. The
+        # subscriber *should* be fired.
+        d.addCallback(lambda ign: ic1.remote_announce_v2([self.ann1b]))
+        d.addCallback(fireEventually)
+        def _then3(ign):
+            self.failUnlessEqual(len(announcements), 2)
+            nodeid,ann_d = announcements[-1]
+            self.failUnlessEqual(nodeid.encode("hex"), pubkey_hex)
+            self.failUnlessEqual(ann_d["FURL"], furl1)
+            self.failUnlessEqual(ann_d["my-version"], "ver24")
+        d.addCallback(_then3)
 
-            # and a replacement announcement with a FURL that uses different
-            # connection hints. The old connector should be replaced with a
-            # new one.
-            ic1.remote_announce_v2([self.ann1a])
-            connectors = ic1._connectors.values()
-            self.failUnlessEqual(len(connectors), 1)
-            c2 = connectors[0]
-            self.failIfIdentical(c, c2)
-            self.failUnless(c.started)
-            self.failUnless(c.stopped)
-            self.failUnlessEqual(c.furl, furl1)
-            self.failUnless(c2.started)
-            self.failIf(c2.stopped)
-            self.failUnlessEqual(c2.furl, furl1a)
-            # test that the other stuff didn't change
-            s = ic1.get_all_services()
-            self.failUnlessEqual(len(s), 1)
-            bo = s[0]["blessed_announcement"].get_leaf()
-            self.failUnlessEqual(bo["my-version"], "ver23")
+        # and a replacement announcement with a different FURL (it uses
+        # different connection hints)
+        d.addCallback(lambda ign: ic1.remote_announce_v2([self.ann1a]))
+        d.addCallback(fireEventually)
+        def _then4(ign):
+            self.failUnlessEqual(len(announcements), 3)
+            nodeid,ann_d = announcements[-1]
+            self.failUnlessEqual(nodeid.encode("hex"), pubkey_hex)
+            self.failUnlessEqual(ann_d["FURL"], furl1a)
+            self.failUnlessEqual(ann_d["my-version"], "ver23")
+        d.addCallback(_then4)
 
-        d.addCallback(_ready)
+        # now add a new subscription, which should be called with the
+        # backlog. The introducer only records one announcement per index, so
+        # the backlog will only have the latest message.
+        announcements2 = []
+        def _received2(nodeid, ann_d):
+            announcements2.append( (nodeid, ann_d) )
+        d.addCallback(lambda ign: ic1.subscribe_to("storage", _received2))
+        d.addCallback(fireEventually)
+        def _then5(ign):
+            self.failUnlessEqual(len(announcements2), 1)
+            nodeid,ann_d = announcements2[-1]
+            self.failUnlessEqual(nodeid.encode("hex"), pubkey_hex)
+            self.failUnlessEqual(ann_d["FURL"], furl1a)
+            self.failUnlessEqual(ann_d["my-version"], "ver23")
+        d.addCallback(_then5)
         return d
 
 class SystemTestMixin(ServiceMixin, pollmixin.PollMixin):
@@ -556,3 +534,9 @@ class DecodeFurl(unittest.TestCase):
         nodeid = b32decode(m.group(1).upper())
         self.failUnlessEqual(nodeid, "\x9fM\xf2\x19\xcckU0\xbf\x03\r\x10\x99\xfb&\x9b-\xc7A\x1d")
 
+
+# add tests of StorageFarmBroker: if it receives duplicate announcements, it
+# should leave the Reconnector in place, also if it receives
+# same-FURL-different-misc, but if it receives same-nodeid-different-FURL, it
+# should tear down the Reconnector and make a new one. This behavior used to
+# live in the IntroducerClient, and thus used to be tested by test_introducer

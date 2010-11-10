@@ -12,14 +12,14 @@ def make_index(ann_d, key):
 
     service_name = str(ann_d["service-name"])
     if key:
-        index = (key.to_string(), service_name)
+        index = (service_name, key.to_string())
     else:
         # otherwise, use the FURL to get a tubid
         furl = str(ann_d["FURL"])
         m = re.match(r'pb://(\w+)@', furl)
         assert m
         tubid = b32decode(m.group(1).upper())
-        index = (tubid, service_name)
+        index = (service_name, tubid)
     return index
 
 def convert_announcement_v1_to_v2(ann_t):
@@ -66,8 +66,7 @@ def unsign(ann_s):
     (msg_s, sig_s, key_s) = simplejson.loads(ann_s)
     key = None
     if sig_s and key_s:
-        key = VerifyingKey.from_string(key_s)
-        sig = sig_s.decode("hex")
-        key.verify(msg_s, sig)
+        key = VerifyingKey.from_string(key_s.decode("hex"))
+        key.verify(sig_s.decode("hex"), msg_s)
     msg = simplejson.loads(msg_s)
     return (msg, key)

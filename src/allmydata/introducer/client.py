@@ -256,16 +256,16 @@ class IntroducerClient(service.Service, Referenceable):
             self._debug_counts["wrong_service"] += 1
             return
         nick_s = ann_d.get("nickname",u"").encode("utf-8")
-        lp2 = self.log("announcement for nickname %(nick)s, service=%(svc)s: %(ann)s",
+        lp2 = self.log(format="announcement for nickname '%(nick)s', service=%(svc)s: %(ann)s",
                        nick=nick_s, svc=service_name, ann=ann_d, umid="BoKEag")
 
         index = make_index(ann_d, key)
-        nodeid = index[0]
+        nodeid = index[1]
         nodeid_s = idlib.nodeid_b2a(nodeid)
 
         # is this announcement a duplicate?
         if self._current_announcements.get(index, [None]*3)[0] == ann_d:
-            self.log("reannouncement for [%(service)s]:%(nodeid)s, ignoring",
+            self.log(format="reannouncement for [%(service)s]:%(nodeid)s, ignoring",
                      service=service_name, nodeid=nodeid_s,
                      parent=lp2, level=log.UNUSUAL, umid="B1MIdA")
             self._debug_counts["duplicate_announcement"] += 1
