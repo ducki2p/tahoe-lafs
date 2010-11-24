@@ -90,9 +90,17 @@ class IntroducerService(service.MultiService, Referenceable):
         # 'index' is (service_name, tubid)
         self._announcements = {} # dict of index ->
                                  # (ann_s, canary, ann_d, timestamp)
-        # 'subscription' is a tuple of (subscriber_info, timestamp)
-        # 'subscriptions' is a dict mapping rref to a subscription
+
+        # ann_d is cleaned up (nickname is always unicode, servicename is
+        # always ascii, etc, even though simplejson.loads sometimes returns
+        # either)
+
         # self._subscribers is a dict mapping servicename to subscriptions
+        # 'subscriptions' is a dict mapping rref to a subscription
+        # 'subscription' is a tuple of (subscriber_info, timestamp)
+        # 'subscriber_info' is a dict, provided directly for v2 clients, or
+        # synthesized for v1 clients. The expected keys are:
+        #  version, nickname, app-versions, my-version, oldest-supported
         self._subscribers = {}
 
         # self._stub_client_announcements contains the information provided
@@ -120,7 +128,14 @@ class IntroducerService(service.MultiService, Referenceable):
     def get_announcements(self):
         return self._announcements
     def get_subscribers(self):
-        return self._subscribers
+        """Return a list of (service_name, when, subscriber_info, rref) for
+        all subscribers. subscriber_info is a dict with the following keys:
+        version, nickname, app-versions, my-version, oldest-supported"""
+        s = []
+        for service_name, subscriptions in self._subscribers.items():
+            for rref,(subscriber_info,when) in subscriptions.items():
+                s.append( (service_name, when, subscriber_info, rref) )
+        return s
 
     def remote_get_version(self):
         return self.VERSION
