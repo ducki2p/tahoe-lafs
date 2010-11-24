@@ -109,7 +109,7 @@ class IntroducerService(service.MultiService, Referenceable):
 
     def log(self, *args, **kwargs):
         if "facility" not in kwargs:
-            kwargs["facility"] = "tahoe.introducer"
+            kwargs["facility"] = "tahoe.introducer.server"
         return log.msg(*args, **kwargs)
 
     def get_announcements(self):
@@ -230,9 +230,6 @@ class IntroducerService(service.MultiService, Referenceable):
         return self.add_subscriber(subscriber, service_name, subscriber_info)
 
     def add_subscriber(self, subscriber, service_name, subscriber_info):
-        self.log("introducer: subscription[%s] request at %s" % (service_name,
-                                                                 subscriber),
-                 umid="jsokBA")
         self._debug_counts["inbound_subscribe"] += 1
         if service_name not in self._subscribers:
             self._subscribers[service_name] = {}
@@ -264,11 +261,13 @@ class IntroducerService(service.MultiService, Referenceable):
         announcements = set( [ ann_s
                                for idx,(ann_s,canary,ann_d,when)
                                in self._announcements.items()
-                               if idx[1] == service_name] )
-        self._debug_counts["outbound_message"] += 1
-        self._debug_counts["outbound_announcements"] += len(announcements)
-        d = subscriber.callRemote("announce_v2", announcements)
-        d.addErrback(log.err,
-                     format="subscriber errored during subscribe %(anns)s",
-                     anns=announcements, facility="tahoe.introducer",
-                     level=log.UNUSUAL, umid="mtZepQ")
+                               if idx[0] == service_name] )
+        if announcements:
+            self._debug_counts["outbound_message"] += 1
+            self._debug_counts["outbound_announcements"] += len(announcements)
+            d = subscriber.callRemote("announce_v2", announcements)
+            d.addErrback(log.err,
+                         format="subscriber errored during subscribe %(anns)s",
+                         anns=announcements, facility="tahoe.introducer",
+                         level=log.UNUSUAL, umid="mtZepQ")
+            return d

@@ -140,7 +140,7 @@ class IntroducerClient(service.Service, Referenceable):
 
     def log(self, *args, **kwargs):
         if "facility" not in kwargs:
-            kwargs["facility"] = "tahoe.introducer"
+            kwargs["facility"] = "tahoe.introducer.client"
         return log.msg(*args, **kwargs)
 
     def subscribe_to(self, service_name, cb, *args, **kwargs):
@@ -236,6 +236,7 @@ class IntroducerClient(service.Service, Referenceable):
 
     def got_announcements(self, announcements, lp=None):
         # this is the common entry point for both v1 and v2 announcements
+        self._debug_counts["inbound_message"] += 1
         for ann_s in announcements:
             try:
                 ann_d, key = unsign(ann_s) # might raise bad-sig error
@@ -255,6 +256,9 @@ class IntroducerClient(service.Service, Referenceable):
                      % (service_name,), level=log.UNUSUAL, umid="dIpGNA")
             self._debug_counts["wrong_service"] += 1
             return
+        # for ASCII values, simplejson might give us unicode *or* bytes
+        if "nickname" in ann_d and isinstance(ann_d["nickname"], str):
+            ann_d["nickname"] = unicode(ann_d["nickname"])
         nick_s = ann_d.get("nickname",u"").encode("utf-8")
         lp2 = self.log(format="announcement for nickname '%(nick)s', service=%(svc)s: %(ann)s",
                        nick=nick_s, svc=service_name, ann=ann_d, umid="BoKEag")

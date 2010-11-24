@@ -441,4 +441,4 @@ class IntroducerService_v1(service.MultiService, Referenceable):
         d.addErrback(log.err,
                      format="subscriber errored during subscribe %(anns)s",
                      anns=announcements, facility="tahoe.introducer",
-                     level=log.UNUSUAL, umid="mtZepQ")
+                     level=log.UNUSUAL, umid="1XChxA")
