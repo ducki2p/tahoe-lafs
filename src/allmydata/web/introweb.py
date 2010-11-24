@@ -127,7 +127,7 @@ class IntroducerRoot(rend.Page):
         ctx.fillSlots("announced",
                       time.strftime(TIME_FORMAT, time.localtime(since)))
         ctx.fillSlots("version", ann_d["my-version"])
-        ctx.fillSlots("service_name", ann_d["service-name"]) # TODO XSS
+        ctx.fillSlots("service_name", ann_d["service-name"])
         return ctx.tag
 
     def data_subscribers(self, ctx, data):
