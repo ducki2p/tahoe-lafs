@@ -292,12 +292,34 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             clients.append(c)
             tubs[c] = tub
 
-        def _wait_for_all_connections():
-            for c in subscribing_clients:
-                if len(received_announcements[c]) < NUM_SERVERS:
+        # we can't really know when a live system is idle: there may be a
+        # message on the wire. If we shut down the Tub, we can know (i.e.
+        # dead==stable). But until then, the best we can do is figure out
+        # which messages are supposed to be sent, identify a way to measure
+        # when they've been received, and poll until those measurements
+        # report completion.
+
+        def _wait_until_clients_are_idle(ign):
+            def _clients_are_idle():
+                for c in subscribing_clients + publishing_clients:
+                    if c._debug_outstanding:
+                        return False
+                if introducer._debug_outstanding:
                     return False
-            return True
-        d = self.poll(_wait_for_all_connections)
+                return True
+            return self.poll(_clients_are_idle)
+
+        d = defer.succeed(None)
+
+        def _wait_for_all_connections(ign):
+            def _got_all_connections():
+                for c in subscribing_clients:
+                    if len(received_announcements[c]) < NUM_SERVERS:
+                        return False
+                return True
+            return self.poll(_got_all_connections)
+        d.addCallback(_wait_for_all_connections)
+        d.addCallback(_wait_until_clients_are_idle)
 
         def _check1(res):
             log.msg("doing _check1")
@@ -305,7 +327,11 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             self.failUnlessEqual(dc["inbound_message"], NUM_SERVERS)
             self.failUnlessEqual(dc["inbound_duplicate"], 0)
             self.failUnlessEqual(dc["inbound_update"], 0)
-            self.failUnless(dc["outbound_message"])
+            # the number of outbound messages is tricky.. I think it depends
+            # upon a race between the publish and the subscribe messages.
+            self.failUnless(dc["outbound_message"] > 0)
+            self.failUnlessEqual(dc["outbound_announcements"],
+                                 NUM_SERVERS*(NUMCLIENTS+1))
 
             for c in clients:
                 self.failUnless(c.connected_to_introducer())
@@ -330,6 +356,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             for c in publishing_clients:
                 cdc = c._debug_counts
                 self.failUnlessEqual(cdc["outbound_message"], 1)
+            log.msg("_check1 done")
         d.addCallback(_check1)
 
         # force an introducer reconnect, by shutting down the Tub it's using
@@ -342,12 +369,14 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         d.addCallback(lambda _ign: log.msg("shutting down introducer's Tub"))
         d.addCallback(lambda _ign: self.central_tub.disownServiceParent())
 
-        def _wait_for_introducer_loss():
-            for c in clients:
-                if c.connected_to_introducer():
-                    return False
-            return True
-        d.addCallback(lambda res: self.poll(_wait_for_introducer_loss))
+        def _wait_for_introducer_loss(ign):
+            def _introducer_lost():
+                for c in clients:
+                    if c.connected_to_introducer():
+                        return False
+                return True
+            return self.poll(_introducer_lost)
+        d.addCallback(_wait_for_introducer_loss)
 
         def _restart_introducer_tub(_ign):
             log.msg("restarting introducer's Tub")
@@ -387,6 +416,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                     return False
             return True
         d.addCallback(lambda res: self.poll(_wait_for_introducer_reconnect))
+        d.addCallback(lambda _ign: log.msg(" reconnected"))
+        d.addCallback(_wait_until_clients_are_idle)
 
         def _check2(res):
             log.msg("doing _check2")
@@ -413,7 +444,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
 
         d.addCallback(lambda _ign: log.msg("shutting down introducer"))
         d.addCallback(lambda _ign: self.central_tub.disownServiceParent())
-        d.addCallback(lambda res: self.poll(_wait_for_introducer_loss))
+        d.addCallback(_wait_for_introducer_loss)
+        d.addCallback(lambda _ign: log.msg("introducer lost"))
 
         def _restart_introducer(_ign):
             log.msg("restarting introducer")
@@ -434,6 +466,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                                                          furlFile=iff)
             assert newfurl == self.introducer_furl
         d.addCallback(_restart_introducer)
+
         def _wait_for_introducer_reconnect2():
             # wait until:
             #  all clients are connected
@@ -458,6 +491,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                     return False
             return True
         d.addCallback(lambda res: self.poll(_wait_for_introducer_reconnect2))
+        d.addCallback(_wait_until_clients_are_idle)
 
         def _check3(res):
             log.msg("doing _check3")

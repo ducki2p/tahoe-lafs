@@ -96,6 +96,11 @@ class IntroducerClient(service.Service, Referenceable):
             "new_announcement": 0,
             "outbound_message": 0,
             }
+        self._debug_outstanding = 0
+
+    def _debug_retired(self, res):
+        self._debug_outstanding -= 1
+        return res
 
     def startService(self):
         service.Service.startService(self)
@@ -161,9 +166,11 @@ class IntroducerClient(service.Service, Referenceable):
                 # there is a race here, but the subscription desk ignores
                 # duplicate requests.
                 self._subscriptions.add(service_name)
+                self._debug_outstanding += 1
                 d = self._publisher.callRemote("subscribe_v2",
                                                self, service_name,
                                                self._my_subscriber_info)
+                d.addBoth(self._debug_retired)
                 d.addErrback(self._subscribe_handle_v1, service_name) # for_v1
                 d.addErrback(log.err, facility="tahoe.introducer.client",
                              level=log.WEIRD, umid="2uMScQ")
@@ -173,7 +180,9 @@ class IntroducerClient(service.Service, Referenceable):
         # they don't have a 'subscribe_v2' method: must be a v1 introducer.
         # Fall back to the v1 'subscribe' method, using a client adapter.
         ca = ClientAdapter_v1(self)
+        self._debug_outstanding += 1
         d = self._publisher.callRemote("subscribe", ca, service_name)
+        d.addBoth(self._debug_retired)
         # We must also publish an empty 'stub_client' object, so the
         # introducer can count how many clients are connected and see what
         # versions they're running.
@@ -215,7 +224,9 @@ class IntroducerClient(service.Service, Referenceable):
         # this re-publishes everything. The Introducer ignores duplicates
         for ann in self._published_announcements.values():
             self._debug_counts["outbound_message"] += 1
+            self._debug_outstanding += 1
             d = self._publisher.callRemote("publish_v2", ann, self._canary)
+            d.addBoth(self._debug_retired)
             d.addErrback(self._handle_v1_publisher, ann) # for_v1
             d.addErrback(log.err, ann=ann, facility="tahoe.introducer.client",
                          level=log.WEIRD, umid="xs9pVQ")
@@ -227,7 +238,10 @@ class IntroducerClient(service.Service, Referenceable):
         self.log("falling back to publish_v1",
                  level=log.UNUSUAL, umid="9RCT1A", failure=f)
         ann_v1 = convert_announcement_v2_to_v1(ann)
-        return self._publisher.callRemote("publish", ann_v1)
+        self._debug_outstanding += 1
+        d = self._publisher.callRemote("publish", ann_v1)
+        d.addBoth(self._debug_retired)
+        return d
 
 
     def remote_announce_v2(self, announcements):

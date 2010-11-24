@@ -106,6 +106,11 @@ class IntroducerService(service.MultiService, Referenceable):
                               "outbound_message": 0,
                               "outbound_announcements": 0,
                               "inbound_subscribe": 0}
+        self._debug_outstanding = 0 # also covers SubscriberAdapter_v1
+
+    def _debug_retired(self, res):
+        self._debug_outstanding -= 1
+        return res
 
     def log(self, *args, **kwargs):
         if "facility" not in kwargs:
@@ -203,7 +208,9 @@ class IntroducerService(service.MultiService, Referenceable):
         for s in self._subscribers.get(service_name, []):
             self._debug_counts["outbound_message"] += 1
             self._debug_counts["outbound_announcements"] += 1
+            self._debug_outstanding += 1
             d = s.callRemote("announce_v2", set([ann_s]))
+            d.addBoth(self._debug_retired)
             d.addErrback(log.err,
                          format="subscriber errored on announcement %(ann)s",
                          ann=ann_s, facility="tahoe.introducer",
@@ -265,7 +272,9 @@ class IntroducerService(service.MultiService, Referenceable):
         if announcements:
             self._debug_counts["outbound_message"] += 1
             self._debug_counts["outbound_announcements"] += len(announcements)
+            self._debug_outstanding += 1
             d = subscriber.callRemote("announce_v2", announcements)
+            d.addBoth(self._debug_retired)
             d.addErrback(log.err,
                          format="subscriber errored during subscribe %(anns)s",
                          anns=announcements, facility="tahoe.introducer",
