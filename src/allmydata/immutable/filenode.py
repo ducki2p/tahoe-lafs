@@ -55,11 +55,11 @@ class CiphertextFileNode:
         return a Deferred that fires (with the consumer) when the read is
         finished."""
         self._maybe_create_download_node()
-        actual_size = size
-        if actual_size is None:
-            actual_size = self._verifycap.size - offset
-        read_ev = self._download_status.add_read_event(offset, actual_size,
-                                                       now())
+        if size is None:
+            size = self._verifycap.size
+        # clip size so offset+size does not go past EOF
+        size = min(size, self._verifycap.size-offset)
+        read_ev = self._download_status.add_read_event(offset, size, now())
         if IDownloadStatusHandlingConsumer.providedBy(consumer):
             consumer.set_download_status_read_event(read_ev)
         return self._node.read(consumer, offset, size, read_ev)
@@ -177,7 +177,7 @@ class DecryptingConsumer:
 
     def __init__(self, consumer, readkey, offset):
         self._consumer = consumer
-        self._read_event = None
+        self._read_ev = None
         # TODO: pycryptopp CTR-mode needs random-access operations: I want
         # either a=AES(readkey, offset) or better yet both of:
         #  a=AES(readkey, offset=0)
@@ -190,7 +190,7 @@ class DecryptingConsumer:
         self._decryptor.process("\x00"*offset_small)
 
     def set_download_status_read_event(self, read_ev):
-        self._read_event = read_ev
+        self._read_ev = read_ev
 
     def registerProducer(self, producer, streaming):
         # this passes through, so the real consumer can flow-control the real
@@ -203,9 +203,9 @@ class DecryptingConsumer:
     def write(self, ciphertext):
         started = now()
         plaintext = self._decryptor.process(ciphertext)
-        if self._read_event:
+        if self._read_ev:
             elapsed = now() - started
-            self._read_event.update(0, elapsed, 0)
+            self._read_ev.update(0, elapsed, 0)
         self._consumer.write(plaintext)
 
 class ImmutableFileNode:
