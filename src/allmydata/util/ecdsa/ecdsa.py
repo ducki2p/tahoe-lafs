@@ -178,8 +178,8 @@ def digest_integer( m ):
   # it in order to be able to duplicate the examples
   # in ECDSAVS.
   #
-  import sha
-  return string_to_int( sha.new( int_to_string( m ) ).digest() )
+  from hashlib import sha1
+  return string_to_int( sha1( int_to_string( m ) ).digest() )
 
 
 def point_is_valid( generator, x, y ):
@@ -263,7 +263,7 @@ generator_521 = ellipticcurve.Point( curve_521, _Gx, _Gy, _r )
 
   
 
-if __name__ == "__main__":
+def __main__():
   class TestFailure(Exception): pass
 
   def test_point_validity( generator, x, y, expected ):
@@ -555,3 +555,6 @@ if __name__ == "__main__":
     raise TestFailure( "**** Demo verification failed to reject tampered hash.")
   else:
     print "Demo verification correctly rejected tampered hash."
+
+if __name__ == "__main__":
+  __main__()
