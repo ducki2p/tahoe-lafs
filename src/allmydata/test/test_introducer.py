@@ -11,6 +11,7 @@ from twisted.application import service
 from allmydata.interfaces import InsufficientVersionError
 from allmydata.introducer.client import IntroducerClient, ClientAdapter_v1
 from allmydata.introducer.server import IntroducerService
+from allmydata.introducer import old
 # test compatibility with old introducer .tac files
 from allmydata.introducer import IntroducerNode
 from allmydata.util import pollmixin, ecdsa
@@ -251,19 +252,21 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         ifurl = self.central_tub.registerReference(introducer, furlFile=iff)
         self.introducer_furl = ifurl
 
-        NUMCLIENTS = 5
-        # we have 5 clients who publish themselves, and an extra one does
-        # which not. When the connections are fully established, all six nodes
+        # we have 5 clients who publish themselves as storage servers, and a
+        # sixth which does which not. All 6 clients subscriber to hear about
+        # storage. When the connections are fully established, all six nodes
         # should have 5 connections each.
+        NUM_STORAGE = 5
+        NUM_CLIENTS = 6
 
         clients = []
         tubs = {}
         received_announcements = {}
-        NUM_SERVERS = NUMCLIENTS
         subscribing_clients = []
         publishing_clients = []
+        privkeys = {}
 
-        for i in range(NUMCLIENTS+1):
+        for i in range(NUM_CLIENTS):
             tub = Tub()
             #tub.setOption("logLocalFailures", True)
             #tub.setOption("logRemoteFailures", True)
@@ -274,19 +277,44 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             tub.setLocation("localhost:%d" % portnum)
 
             log.msg("creating client %d: %s" % (i, tub.getShortTubID()))
-            c = IntroducerClient(tub, self.introducer_furl, u"nickname-%d" % i,
-                                 "version", "oldest", {})
+            if i == 0:
+                c = old.IntroducerClient_v1(tub, self.introducer_furl,
+                                            u"nickname-%d" % i,
+                                            "version", "oldest")
+            else:
+                c = IntroducerClient(tub, self.introducer_furl,
+                                     u"nickname-%d" % i,
+                                     "version", "oldest",
+                                     {"component": "component-v1"})
             received_announcements[c] = {}
             def got(serverid, ann_d, announcements):
                 announcements[serverid] = ann_d
             c.subscribe_to("storage", got, received_announcements[c])
             subscribing_clients.append(c)
 
-            if i < NUMCLIENTS:
-                node_furl = tub.registerReference(Referenceable())
-                c.publish(node_furl, "storage", "ri_name")
+            node_furl = tub.registerReference(Referenceable())
+            if i < NUM_STORAGE:
+                if i == 1:
+                    # sign the announcement
+                    privkey = privkeys[c] = ecdsa.SigningKey.generate()
+                    c.publish(node_furl, "storage", "ri_name", privkey)
+                else:
+                    c.publish(node_furl, "storage", "ri_name")
                 publishing_clients.append(c)
-            # the last one does not publish anything
+            else:
+                # the last one does not publish anything
+                pass
+
+            if i == 0:
+                # the V1 client published a 'stub_client' record (somewhat
+                # after it published the 'storage' record), so the introducer
+                # could see its version. Match that behavior.
+                c.publish(node_furl, "stub_client", "stub_ri_name")
+
+            if i == 2:
+                # also publish something that nobody cares about
+                boring_furl = tub.registerReference(Referenceable())
+                c.publish(boring_furl, "boring", "ri_name")
 
             c.setServiceParent(self.parent)
             clients.append(c)
@@ -314,24 +342,26 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         def _wait_for_all_connections(ign):
             def _got_all_connections():
                 for c in subscribing_clients:
-                    if len(received_announcements[c]) < NUM_SERVERS:
+                    if len(received_announcements[c]) < NUM_STORAGE:
                         return False
                 return True
             return self.poll(_got_all_connections)
         d.addCallback(_wait_for_all_connections)
         d.addCallback(_wait_until_clients_are_idle)
+        # XXX WORKING TO GET TO HERE
+        #return d
 
         def _check1(res):
             log.msg("doing _check1")
             dc = introducer._debug_counts
-            self.failUnlessEqual(dc["inbound_message"], NUM_SERVERS)
+            self.failUnlessEqual(dc["inbound_message"], NUM_STORAGE)
             self.failUnlessEqual(dc["inbound_duplicate"], 0)
             self.failUnlessEqual(dc["inbound_update"], 0)
             # the number of outbound messages is tricky.. I think it depends
             # upon a race between the publish and the subscribe messages.
             self.failUnless(dc["outbound_message"] > 0)
             self.failUnlessEqual(dc["outbound_announcements"],
-                                 NUM_SERVERS*(NUMCLIENTS+1))
+                                 NUM_STORAGE*(NUM_CLIENTS+1))
 
             for c in clients:
                 self.failUnless(c.connected_to_introducer())
@@ -339,14 +369,14 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 cdc = c._debug_counts
                 self.failUnless(cdc["inbound_message"])
                 self.failUnlessEqual(cdc["inbound_announcement"],
-                                     NUM_SERVERS)
+                                     NUM_STORAGE)
                 self.failUnlessEqual(cdc["wrong_service"], 0)
                 self.failUnlessEqual(cdc["duplicate_announcement"], 0)
                 self.failUnlessEqual(cdc["update"], 0)
                 self.failUnlessEqual(cdc["new_announcement"],
-                                     NUM_SERVERS)
+                                     NUM_STORAGE)
                 anns = received_announcements[c]
-                self.failUnlessEqual(len(anns), NUM_SERVERS)
+                self.failUnlessEqual(len(anns), NUM_STORAGE)
 
                 nodeid0 = b32decode(tubs[clients[0]].tubID.upper())
                 ann_d = anns[nodeid0]
@@ -382,8 +412,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             log.msg("restarting introducer's Tub")
 
             dc = introducer._debug_counts
-            self.expected_count = dc["inbound_message"] + NUM_SERVERS
-            self.expected_subscribe_count = dc["inbound_subscribe"] + NUMCLIENTS+1
+            self.expected_count = dc["inbound_message"] + NUM_STORAGE
+            self.expected_subscribe_count = dc["inbound_subscribe"] + NUM_CLIENTS+1
             introducer._debug0 = dc["outbound_message"]
             for c in subscribing_clients:
                 cdc = c._debug_counts
@@ -424,8 +454,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             # assert that the introducer sent out new messages, one per
             # subscriber
             dc = introducer._debug_counts
-            self.failUnlessEqual(dc["inbound_message"], 2*NUM_SERVERS)
-            self.failUnlessEqual(dc["inbound_duplicate"], NUM_SERVERS)
+            self.failUnlessEqual(dc["inbound_message"], 2*NUM_STORAGE)
+            self.failUnlessEqual(dc["inbound_duplicate"], NUM_STORAGE)
             self.failUnlessEqual(dc["inbound_update"], 0)
             self.failUnlessEqual(dc["outbound_message"],
                                  introducer._debug0 + len(subscribing_clients))
@@ -433,7 +463,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 self.failUnless(c.connected_to_introducer())
             for c in subscribing_clients:
                 cdc = c._debug_counts
-                self.failUnlessEqual(cdc["duplicate_announcement"], NUM_SERVERS)
+                self.failUnlessEqual(cdc["duplicate_announcement"], NUM_STORAGE)
         d.addCallback(_check2)
 
         # Then force an introducer restart, by shutting down the Tub,
@@ -459,8 +489,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 c._debug2 = cdc["inbound_message"]
                 c._debug3 = cdc["new_announcement"]
             newintroducer = create_introducer()
-            self.expected_message_count = NUM_SERVERS
-            self.expected_announcement_count = NUM_SERVERS*len(subscribing_clients)
+            self.expected_message_count = NUM_STORAGE
+            self.expected_announcement_count = NUM_STORAGE*len(subscribing_clients)
             self.expected_subscribe_count = len(subscribing_clients)
             newfurl = self.central_tub.registerReference(newintroducer,
                                                          furlFile=iff)
@@ -487,7 +517,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 return False
             for c in subscribing_clients:
                 cdc = c._debug_counts
-                if cdc["inbound_announcement"] < c._debug1+NUM_SERVERS:
+                if cdc["inbound_announcement"] < c._debug1+NUM_STORAGE:
                     return False
             return True
         d.addCallback(lambda res: self.poll(_wait_for_introducer_reconnect2))
@@ -504,10 +534,10 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 # there should have been no new announcements
                 self.failUnlessEqual(cdc["new_announcement"], c._debug3)
                 # and the right number of duplicate ones. There were
-                # NUM_SERVERS from the servertub restart, and there should be
-                # another NUM_SERVERS now
+                # NUM_STORAGE from the servertub restart, and there should be
+                # another NUM_STORAGE now
                 self.failUnlessEqual(cdc["duplicate_announcement"],
-                                     2*NUM_SERVERS)
+                                     2*NUM_STORAGE)
 
         d.addCallback(_check3)
         return d
