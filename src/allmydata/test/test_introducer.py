@@ -256,8 +256,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         # sixth which does which not. All 6 clients subscriber to hear about
         # storage. When the connections are fully established, all six nodes
         # should have 5 connections each.
-        NUM_STORAGE = 5
-        NUM_CLIENTS = 6
+        self.NUM_STORAGE = 5
+        self.NUM_CLIENTS = 6
 
         clients = []
         tubs = {}
@@ -266,7 +266,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         publishing_clients = []
         privkeys = {}
 
-        for i in range(NUM_CLIENTS):
+        for i in range(self.NUM_CLIENTS):
             tub = Tub()
             #tub.setOption("logLocalFailures", True)
             #tub.setOption("logRemoteFailures", True)
@@ -293,7 +293,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             subscribing_clients.append(c)
 
             node_furl = tub.registerReference(Referenceable())
-            if i < NUM_STORAGE:
+            if i < self.NUM_STORAGE:
                 if i == 1:
                     # sign the announcement
                     privkey = privkeys[c] = ecdsa.SigningKey.generate()
@@ -342,7 +342,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         def _wait_for_all_connections(ign):
             def _got_all_connections():
                 for c in subscribing_clients:
-                    if len(received_announcements[c]) < NUM_STORAGE:
+                    if len(received_announcements[c]) < self.NUM_STORAGE:
                         return False
                 return True
             return self.poll(_got_all_connections)
@@ -351,19 +351,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
 
         def _check1(res):
             log.msg("doing _check1")
-            dc = introducer._debug_counts
-            # each storage server publishes a record, plus a "stub_client"
-            # and a "boring"
-            self.failUnlessEqual(dc["inbound_message"], NUM_STORAGE+2)
-            self.failUnlessEqual(dc["inbound_duplicate"], 0)
-            self.failUnlessEqual(dc["inbound_update"], 0)
-            self.failUnlessEqual(dc["inbound_subscribe"], NUM_CLIENTS)
-            # the number of outbound messages is tricky.. I think it depends
-            # upon a race between the publish and the subscribe messages.
-            self.failUnless(dc["outbound_message"] > 0)
-            # each client subscribes to "storage", and each server publishes
-            self.failUnlessEqual(dc["outbound_announcements"],
-                                 NUM_STORAGE*NUM_CLIENTS)
+            self.check_introducer(introducer)
 
             for c in clients:
                 self.failUnless(c.connected_to_introducer())
@@ -371,14 +359,14 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 cdc = c._debug_counts
                 self.failUnless(cdc["inbound_message"])
                 self.failUnlessEqual(cdc["inbound_announcement"],
-                                     NUM_STORAGE)
+                                     self.NUM_STORAGE)
                 self.failUnlessEqual(cdc["wrong_service"], 0)
                 self.failUnlessEqual(cdc["duplicate_announcement"], 0)
                 self.failUnlessEqual(cdc["update"], 0)
                 self.failUnlessEqual(cdc["new_announcement"],
-                                     NUM_STORAGE)
+                                     self.NUM_STORAGE)
                 anns = received_announcements[c]
-                self.failUnlessEqual(len(anns), NUM_STORAGE)
+                self.failUnlessEqual(len(anns), self.NUM_STORAGE)
 
                 nodeid0 = b32decode(tubs[clients[0]].tubID.upper())
                 ann_d = anns[nodeid0]
@@ -419,8 +407,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             log.msg("restarting introducer's Tub")
 
             dc = introducer._debug_counts
-            self.expected_count = dc["inbound_message"] + NUM_STORAGE+2
-            self.expected_subscribe_count = dc["inbound_subscribe"] + NUM_CLIENTS
+            self.expected_count = dc["inbound_message"] + self.NUM_STORAGE+2
+            self.expected_subscribe_count = dc["inbound_subscribe"] + self.NUM_CLIENTS
             introducer._debug0 = dc["outbound_message"]
             for c in subscribing_clients:
                 cdc = c._debug_counts
@@ -461,9 +449,9 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             # assert that the introducer sent out new messages, one per
             # subscriber
             dc = introducer._debug_counts
-            self.failUnlessEqual(dc["inbound_message"], 2*(NUM_STORAGE+2))
+            self.failUnlessEqual(dc["inbound_message"], 2*(self.NUM_STORAGE+2))
             # the stub_client announcement does not count as a duplicate
-            self.failUnlessEqual(dc["inbound_duplicate"], NUM_STORAGE+1)
+            self.failUnlessEqual(dc["inbound_duplicate"], self.NUM_STORAGE+1)
             self.failUnlessEqual(dc["inbound_update"], 0)
             self.failUnlessEqual(dc["outbound_message"],
                                  introducer._debug0 + len(subscribing_clients))
@@ -471,7 +459,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 self.failUnless(c.connected_to_introducer())
             for c in subscribing_clients:
                 cdc = c._debug_counts
-                self.failUnlessEqual(cdc["duplicate_announcement"], NUM_STORAGE)
+                self.failUnlessEqual(cdc["duplicate_announcement"], self.NUM_STORAGE)
         d.addCallback(_check2)
 
         # Then force an introducer restart, by shutting down the Tub,
@@ -497,9 +485,9 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 c._debug2 = cdc["inbound_message"]
                 c._debug3 = cdc["new_announcement"]
             newintroducer = create_introducer()
-            self.expected_message_count = NUM_STORAGE+2
-            self.expected_announcement_count = NUM_STORAGE*NUM_CLIENTS
-            self.expected_subscribe_count = NUM_CLIENTS
+            self.expected_message_count = self.NUM_STORAGE+2
+            self.expected_announcement_count = self.NUM_STORAGE*self.NUM_CLIENTS
+            self.expected_subscribe_count = self.NUM_CLIENTS
             newfurl = self.central_tub.registerReference(newintroducer,
                                                          furlFile=iff)
             assert newfurl == self.introducer_furl
@@ -525,7 +513,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 return False
             for c in subscribing_clients:
                 cdc = c._debug_counts
-                if cdc["inbound_announcement"] < c._debug1+NUM_STORAGE:
+                if cdc["inbound_announcement"] < c._debug1+self.NUM_STORAGE:
                     return False
             return True
         d.addCallback(lambda res: self.poll(_wait_for_introducer_reconnect2))
@@ -545,10 +533,25 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 # NUM_STORAGE from the servertub restart, and there should be
                 # another NUM_STORAGE now
                 self.failUnlessEqual(cdc["duplicate_announcement"],
-                                     2*NUM_STORAGE)
+                                     2*self.NUM_STORAGE)
 
         d.addCallback(_check3)
         return d
+
+    def check_introducer(self, introducer):
+        dc = introducer._debug_counts
+        # each storage server publishes a record, plus a "stub_client"
+        # and a "boring"
+        self.failUnlessEqual(dc["inbound_message"], self.NUM_STORAGE+2)
+        self.failUnlessEqual(dc["inbound_duplicate"], 0)
+        self.failUnlessEqual(dc["inbound_update"], 0)
+        self.failUnlessEqual(dc["inbound_subscribe"], self.NUM_CLIENTS)
+        # the number of outbound messages is tricky.. I think it depends
+        # upon a race between the publish and the subscribe messages.
+        self.failUnless(dc["outbound_message"] > 0)
+        # each client subscribes to "storage", and each server publishes
+        self.failUnlessEqual(dc["outbound_announcements"],
+                             self.NUM_STORAGE*self.NUM_CLIENTS)
 
 class TooNewServer(IntroducerService):
     VERSION = { "http://allmydata.org/tahoe/protocols/introducer/v999":
