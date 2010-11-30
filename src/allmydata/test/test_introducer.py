@@ -281,6 +281,9 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 c = old.IntroducerClient_v1(tub, self.introducer_furl,
                                             u"nickname-%d" % i,
                                             "version", "oldest")
+                # the old code didn't have this debugging affordance. hack it
+                # in, so we can pretend to check it.
+                c._debug_outstanding = 0
             else:
                 c = IntroducerClient(tub, self.introducer_furl,
                                      u"nickname-%d" % i,
@@ -348,20 +351,22 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             return self.poll(_got_all_connections)
         d.addCallback(_wait_for_all_connections)
         d.addCallback(_wait_until_clients_are_idle)
-        # XXX WORKING TO GET TO HERE
-        #return d
 
         def _check1(res):
             log.msg("doing _check1")
             dc = introducer._debug_counts
-            self.failUnlessEqual(dc["inbound_message"], NUM_STORAGE)
+            # each storage server publishes a record, plus a "stub_client"
+            # and a "boring"
+            self.failUnlessEqual(dc["inbound_message"], NUM_STORAGE+2)
             self.failUnlessEqual(dc["inbound_duplicate"], 0)
             self.failUnlessEqual(dc["inbound_update"], 0)
+            self.failUnlessEqual(dc["inbound_subscribe"], NUM_CLIENTS)
             # the number of outbound messages is tricky.. I think it depends
             # upon a race between the publish and the subscribe messages.
             self.failUnless(dc["outbound_message"] > 0)
+            # each client subscribes to "storage", and each server publishes
             self.failUnlessEqual(dc["outbound_announcements"],
-                                 NUM_STORAGE*(NUM_CLIENTS+1))
+                                 NUM_STORAGE*NUM_CLIENTS)
 
             for c in clients:
                 self.failUnless(c.connected_to_introducer())
@@ -385,7 +390,12 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 self.failUnlessEqual(nick, u"nickname-0")
             for c in publishing_clients:
                 cdc = c._debug_counts
-                self.failUnlessEqual(cdc["outbound_message"], 1)
+                expected = 1
+                if c in [clients[0], # stub_client
+                         clients[2], # boring
+                         ]:
+                    expected = 2
+                self.failUnlessEqual(cdc["outbound_message"], expected)
             log.msg("_check1 done")
         d.addCallback(_check1)
 
@@ -412,8 +422,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             log.msg("restarting introducer's Tub")
 
             dc = introducer._debug_counts
-            self.expected_count = dc["inbound_message"] + NUM_STORAGE
-            self.expected_subscribe_count = dc["inbound_subscribe"] + NUM_CLIENTS+1
+            self.expected_count = dc["inbound_message"] + NUM_STORAGE+2
+            self.expected_subscribe_count = dc["inbound_subscribe"] + NUM_CLIENTS
             introducer._debug0 = dc["outbound_message"]
             for c in subscribing_clients:
                 cdc = c._debug_counts
@@ -454,8 +464,9 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             # assert that the introducer sent out new messages, one per
             # subscriber
             dc = introducer._debug_counts
-            self.failUnlessEqual(dc["inbound_message"], 2*NUM_STORAGE)
-            self.failUnlessEqual(dc["inbound_duplicate"], NUM_STORAGE)
+            self.failUnlessEqual(dc["inbound_message"], 2*(NUM_STORAGE+2))
+            # the stub_client announcement does not count as a duplicate
+            self.failUnlessEqual(dc["inbound_duplicate"], NUM_STORAGE+1)
             self.failUnlessEqual(dc["inbound_update"], 0)
             self.failUnlessEqual(dc["outbound_message"],
                                  introducer._debug0 + len(subscribing_clients))
@@ -489,9 +500,9 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 c._debug2 = cdc["inbound_message"]
                 c._debug3 = cdc["new_announcement"]
             newintroducer = create_introducer()
-            self.expected_message_count = NUM_STORAGE
-            self.expected_announcement_count = NUM_STORAGE*len(subscribing_clients)
-            self.expected_subscribe_count = len(subscribing_clients)
+            self.expected_message_count = NUM_STORAGE+2
+            self.expected_announcement_count = NUM_STORAGE*NUM_CLIENTS
+            self.expected_subscribe_count = NUM_CLIENTS
             newfurl = self.central_tub.registerReference(newintroducer,
                                                          furlFile=iff)
             assert newfurl == self.introducer_furl
