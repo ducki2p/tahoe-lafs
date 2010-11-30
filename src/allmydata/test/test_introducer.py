@@ -237,13 +237,7 @@ class SystemTestMixin(ServiceMixin, pollmixin.PollMixin):
 
 class SystemTest(SystemTestMixin, unittest.TestCase):
 
-    def test_system(self):
-        self.basedir = "introducer/SystemTest/system"
-        os.makedirs(self.basedir)
-        return self.do_system_test(IntroducerService)
-    test_system.timeout = 480 # occasionally takes longer than 350s on "draco"
-
-    def do_system_test(self, create_introducer):
+    def do_system_test(self, create_introducer, check_introducer):
         self.create_tub()
         introducer = create_introducer()
         introducer.setServiceParent(self.parent)
@@ -351,7 +345,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
 
         def _check1(res):
             log.msg("doing _check1")
-            self.check_introducer(introducer)
+            check_introducer(introducer)
 
             for c in clients:
                 self.failUnless(c.connected_to_introducer())
@@ -537,6 +531,13 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
 
         d.addCallback(_check3)
         return d
+
+
+    def test_system(self):
+        self.basedir = "introducer/SystemTest/system"
+        os.makedirs(self.basedir)
+        return self.do_system_test(IntroducerService, self.check_introducer)
+    test_system.timeout = 480 # occasionally takes longer than 350s on "draco"
 
     def check_introducer(self, introducer):
         dc = introducer._debug_counts
