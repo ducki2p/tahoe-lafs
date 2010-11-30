@@ -281,9 +281,6 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 c = old.IntroducerClient_v1(tub, self.introducer_furl,
                                             u"nickname-%d" % i,
                                             "version", "oldest")
-                # the old code didn't have this debugging affordance. hack it
-                # in, so we can pretend to check it.
-                c._debug_outstanding = 0
             else:
                 c = IntroducerClient(tub, self.introducer_furl,
                                      u"nickname-%d" % i,

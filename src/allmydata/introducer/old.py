@@ -174,6 +174,11 @@ class IntroducerClient_v1(service.Service, Referenceable):
             "new_announcement": 0,
             "outbound_message": 0,
             }
+        self._debug_outstanding = 0
+
+    def _debug_retired(self, res):
+        self._debug_outstanding -= 1
+        return res
 
     def startService(self):
         service.Service.startService(self)
@@ -247,7 +252,9 @@ class IntroducerClient_v1(service.Service, Referenceable):
                 # there is a race here, but the subscription desk ignores
                 # duplicate requests.
                 self._subscriptions.add(service_name)
+                self._debug_outstanding += 1
                 d = self._publisher.callRemote("subscribe", self, service_name)
+                d.addBoth(self._debug_retired)
                 d.addErrback(rrefutil.trap_deadref)
                 d.addErrback(log.err, format="server errored during subscribe",
                              facility="tahoe.introducer",
@@ -260,7 +267,9 @@ class IntroducerClient_v1(service.Service, Referenceable):
         # this re-publishes everything. The Introducer ignores duplicates
         for ann in self._published_announcements:
             self._debug_counts["outbound_message"] += 1
+            self._debug_outstanding += 1
             d = self._publisher.callRemote("publish", ann)
+            d.addBoth(self._debug_retired)
             d.addErrback(rrefutil.trap_deadref)
             d.addErrback(log.err,
                          format="server errored during publish %(ann)s",
@@ -404,7 +413,9 @@ class IntroducerService_v1(service.MultiService, Referenceable):
         for s in self._subscribers.get(service_name, []):
             self._debug_counts["outbound_message"] += 1
             self._debug_counts["outbound_announcements"] += 1
+            self._debug_outstanding += 1
             d = s.callRemote("announce", set([announcement]))
+            d.addBoth(self._debug_retired)
             d.addErrback(rrefutil.trap_deadref)
             d.addErrback(log.err,
                          format="subscriber errored on announcement %(ann)s",
@@ -436,7 +447,9 @@ class IntroducerService_v1(service.MultiService, Referenceable):
 
         self._debug_counts["outbound_message"] += 1
         self._debug_counts["outbound_announcements"] += len(announcements)
+        self._debug_outstanding += 1
         d = subscriber.callRemote("announce", announcements)
+        d.addBoth(self._debug_retired)
         d.addErrback(rrefutil.trap_deadref)
         d.addErrback(log.err,
                      format="subscriber errored during subscribe %(anns)s",
