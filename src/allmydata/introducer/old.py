@@ -369,6 +369,11 @@ class IntroducerService_v1(service.MultiService, Referenceable):
                               "outbound_message": 0,
                               "outbound_announcements": 0,
                               "inbound_subscribe": 0}
+        self._debug_outstanding = 0
+
+    def _debug_retired(self, res):
+        self._debug_outstanding -= 1
+        return res
 
     def log(self, *args, **kwargs):
         if "facility" not in kwargs:

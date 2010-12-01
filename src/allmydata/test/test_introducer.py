@@ -237,7 +237,8 @@ class SystemTestMixin(ServiceMixin, pollmixin.PollMixin):
 
 class SystemTest(SystemTestMixin, unittest.TestCase):
 
-    def do_system_test(self, create_introducer, check_introducer):
+    def do_system_test(self, create_introducer,
+                       check_server, check_publishing_clients):
         self.create_tub()
         introducer = create_introducer()
         introducer.setServiceParent(self.parent)
@@ -345,7 +346,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
 
         def _check1(res):
             log.msg("doing _check1")
-            check_introducer(introducer)
+            check_server(introducer)
 
             for c in clients:
                 self.failUnless(c.connected_to_introducer())
@@ -367,14 +368,7 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 nick = ann_d["nickname"]
                 self.failUnlessEqual(type(nick), unicode)
                 self.failUnlessEqual(nick, u"nickname-0")
-            for c in publishing_clients:
-                cdc = c._debug_counts
-                expected = 1
-                if c in [clients[0], # stub_client
-                         clients[2], # boring
-                         ]:
-                    expected = 2
-                self.failUnlessEqual(cdc["outbound_message"], expected)
+            check_publishing_clients(clients, publishing_clients)
             log.msg("_check1 done")
         d.addCallback(_check1)
 
@@ -533,16 +527,17 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         return d
 
 
-    def test_system(self):
-        self.basedir = "introducer/SystemTest/system"
+    def test_system_v2_server(self):
+        self.basedir = "introducer/SystemTest/system_v2_server"
         os.makedirs(self.basedir)
-        return self.do_system_test(IntroducerService, self.check_introducer)
-    test_system.timeout = 480 # occasionally takes longer than 350s on "draco"
+        return self.do_system_test(IntroducerService, self.check_v2_server,
+                                   self.check_publishing_clients_v2_server)
+    test_system_v2_server.timeout = 480 # occasionally takes longer than 350s on "draco"
 
-    def check_introducer(self, introducer):
-        dc = introducer._debug_counts
-        # each storage server publishes a record, plus a "stub_client"
-        # and a "boring"
+    def check_v2_server(self, server):
+        dc = server._debug_counts
+        # each storage server publishes a record. There is also one
+        # "stub_client" and one "boring"
         self.failUnlessEqual(dc["inbound_message"], self.NUM_STORAGE+2)
         self.failUnlessEqual(dc["inbound_duplicate"], 0)
         self.failUnlessEqual(dc["inbound_update"], 0)
@@ -553,6 +548,65 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         # each client subscribes to "storage", and each server publishes
         self.failUnlessEqual(dc["outbound_announcements"],
                              self.NUM_STORAGE*self.NUM_CLIENTS)
+
+    def check_publishing_clients_v2_server(self, clients, publishing_clients):
+        for c in publishing_clients:
+            cdc = c._debug_counts
+            expected = 1
+            if c in [clients[0], # stub_client
+                     clients[2], # boring
+                     ]:
+                expected = 2
+            self.failUnlessEqual(cdc["outbound_message"], expected)
+
+
+    def test_system_v1_server(self):
+        self.basedir = "introducer/SystemTest/system_v1_server"
+        os.makedirs(self.basedir)
+        print
+        return self.do_system_test(old.IntroducerService_v1,
+                                   self.check_v1_server,
+                                   self.check_publishing_clients_v1_server)
+    test_system_v1_server.timeout = 480 # occasionally takes longer than 350s on "draco"
+
+    def check_v1_server(self, server):
+        dc = server._debug_counts
+        # each storage server publishes a record, and (after its 'subscribe'
+        # has been ACKed) also publishes a "stub_client". The non-storage
+        # client (which subscribes) also publishes a stub_client. There is
+        # also one "boring" service. The number of messages is higher,
+        # because the stub_clients aren't published until after we get the
+        # 'subscribe' ack (since we don't realize that we're dealing with a
+        # v1 server [which needs stub_clients] until then), and the act of
+        # publishing the stub_client causes us to re-send all previous
+        # announcements.
+        self.failUnlessEqual(dc["inbound_message"] - dc["inbound_duplicate"],
+                             self.NUM_STORAGE + self.NUM_CLIENTS + 1)
+        self.failUnlessEqual(dc["inbound_update"], 0)
+        self.failUnlessEqual(dc["inbound_subscribe"], self.NUM_CLIENTS)
+        # the number of outbound messages is tricky.. I think it depends
+        # upon a race between the publish and the subscribe messages.
+        self.failUnless(dc["outbound_message"] > 0)
+        # each client subscribes to "storage", and each server publishes
+        self.failUnlessEqual(dc["outbound_announcements"],
+                             self.NUM_STORAGE*self.NUM_CLIENTS)
+
+    def check_publishing_clients_v1_server(self, clients, publishing_clients):
+        for c in publishing_clients:
+            cdc = c._debug_counts
+            expected = 1 # storage
+            if c is clients[2]:
+                expected += 1 # boring
+            if c is not clients[0]:
+                # the v2 client tries to call publish_v2, which fails because
+                # the server is v1. It then re-sends everything it has so
+                # far, plus a stub_client record
+                expected = 2*expected + 1
+            if c is clients[0]:
+                # we always tell v1 client to send stub_client
+                expected += 1
+            self.failUnlessEqual(cdc["outbound_message"], expected)
+
 
 class TooNewServer(IntroducerService):
     VERSION = { "http://allmydata.org/tahoe/protocols/introducer/v999":
