@@ -89,6 +89,7 @@ def build_one_ds():
     # two outstanding requests
     e2 = ds.add_segment_request(2, now+4)
     e3 = ds.add_segment_request(3, now+5)
+    del e2,e3 # hush pyflakes
 
     # simulate a segment which gets delivered faster than a system clock tick (ticket #1166)
     e = ds.add_segment_request(4, now)

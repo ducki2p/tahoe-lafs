@@ -414,7 +414,6 @@ class DownloadStatusPage(DownloadResultsRendererMixin, rend.Page):
         """
 
         serverid_to_group = {}
-        serverid_and_shnum_to_subgroup = {}
         groupnum_to_rows = {} # maps groupnum to a table of rows. Each table
                               # is a list with an element for each row number
                               # (int starting from 0) that contains a
