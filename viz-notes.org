@@ -1,0 +1,25 @@
+
+* layout
+** read() requests
+   - possibly overlapping: code should find minimum number of rows
+** segment events (request/delivery/error)
+   - also possibly overlapping, use minimum rows
+   - might be nice to show which is active at any given time
+** DYHB queries+responses
+   - completely overlapping, use exactly one row per server
+** server block-read requests (send/receive/error)
+   - use one cluster per server
+   - lots of overlapping reads
+   - within a cluster, use lowest available row
+   - 3-tuple Y axis: (serverid, shnum, overlaps)
+** ideally, tahoe should serve raw data and let JS do the sorting
+   - but my JS is not that good
+   - maybe just provide a hint: include a row number in each event, which
+     tells you how to overlap them
+   - multiple parts, joined with "-", use as JS dict keys
+
+* a graph that shows Y=segment-offset, X=start/finish time
+
+* a scatter plot that shows segnum-tree-height versus finish-start
+  - a local download showed segments that needed a lot of hash nodes taking
+    way more time than others

@@ -350,6 +350,9 @@ class DownloadStatusPage(DownloadResultsRendererMixin, rend.Page):
         rend.Page.__init__(self, data)
         self.download_status = data
 
+    def child_timeline(self, ctx):
+        return DownloadStatusTimelinePage(self.download_status)
+
     def download_results(self):
         return defer.maybeDeferred(self.download_status.get_results)
 
@@ -455,6 +458,13 @@ class DownloadStatusPage(DownloadResultsRendererMixin, rend.Page):
                            for groupnum in range(len(serverid_to_group))]
         return new_events, highest_rownums
 
+    def child_timeline_parameters(self, ctx):
+        ds = self.download_status
+        d = { "start": tfmt(ds.started),
+              "end": tfmt(ds.started+2.0),
+              }
+        return simplejson.dumps(d, indent=1) + "\n"
+
     def child_event_json(self, ctx):
         inevow.IRequest(ctx).setHeader("content-type", "text/plain")
         data = { } # this will be returned to the GET
@@ -494,6 +504,10 @@ class DownloadStatusPage(DownloadResultsRendererMixin, rend.Page):
         ##                                   if d_ev["finish_time"] is not None]
         ##                                  ))
         return simplejson.dumps(data, indent=1) + "\n"
+
+    def render_timeline_link(self, ctx, data):
+        from nevow import url
+        return T.a(href=url.URL.fromContext(ctx).child("timeline"))["timeline"]
 
     def _rate_and_time(self, bytes, seconds):
         time_s = self.render_time(None, seconds)
@@ -621,6 +635,39 @@ class DownloadStatusPage(DownloadResultsRendererMixin, rend.Page):
             return ""
         d.addCallback(_got_results)
         return d
+
+    def render_started(self, ctx, data):
+        TIME_FORMAT = "%H:%M:%S %d-%b-%Y"
+        started_s = time.strftime(TIME_FORMAT,
+                                  time.localtime(data.get_started()))
+        return started_s + " (%s)" % data.get_started()
+
+    def render_si(self, ctx, data):
+        si_s = base32.b2a_or_none(data.get_storage_index())
+        if si_s is None:
+            si_s = "(None)"
+        return si_s
+
+    def render_helper(self, ctx, data):
+        return {True: "Yes",
+                False: "No"}[data.using_helper()]
+
+    def render_total_size(self, ctx, data):
+        size = data.get_size()
+        if size is None:
+            return "(unknown)"
+        return size
+
+    def render_progress(self, ctx, data):
+        progress = data.get_progress()
+        # TODO: make an ascii-art bar
+        return "%.1f%%" % (100.0 * progress)
+
+    def render_status(self, ctx, data):
+        return data.get_status()
+
+class DownloadStatusTimelinePage(rend.Page):
+    docFactory = getxmlfile("download-status-timeline.xhtml")
 
     def render_started(self, ctx, data):
         TIME_FORMAT = "%H:%M:%S %d-%b-%Y"
