@@ -437,6 +437,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             # assert that the introducer sent out new messages, one per
             # subscriber
             dc = introducer._debug_counts
+            print dc
+            #XXX
             self.failUnlessEqual(dc["inbound_message"], 2*(self.NUM_STORAGE+2))
             # the stub_client announcement does not count as a duplicate
             self.failUnlessEqual(dc["inbound_duplicate"], self.NUM_STORAGE+1)

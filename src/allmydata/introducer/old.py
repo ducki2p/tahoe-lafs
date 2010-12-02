@@ -400,6 +400,7 @@ class IntroducerService_v1(service.MultiService, Referenceable):
         self._debug_counts["inbound_message"] += 1
         self.log("introducer: announcement published: %s" % (announcement,) )
         (furl, service_name, ri_name, nickname_utf8, ver, oldest) = announcement
+        #print "PUB", service_name, nickname_utf8
 
         nodeid = b32decode(SturdyRef(furl).tubID.upper())
         index = (service_name, nodeid)

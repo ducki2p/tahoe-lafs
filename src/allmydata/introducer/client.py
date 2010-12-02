@@ -135,6 +135,7 @@ class IntroducerClient(service.Service, Referenceable):
             raise InsufficientVersionError(needed, publisher.version)
         self._publisher = publisher
         publisher.notifyOnDisconnect(self._disconnected)
+        #print "GO", self._nickname
         self._maybe_publish()
         self._maybe_subscribe()
 
@@ -212,12 +213,15 @@ class IntroducerClient(service.Service, Referenceable):
 
     def publish(self, furl, service_name, remoteinterface_name,
                 signing_key=None):
+        #if self._nickname == "nickname-4":
+        #    print "P", service_name, self._nickname
         ann = self.create_announcement(furl, service_name, remoteinterface_name,
                                        signing_key)
         self._published_announcements[service_name] = ann
         self._maybe_publish()
 
     def _maybe_publish(self):
+        #if self._nickname == "nickname-4": print "_maybe_publish"
         if not self._publisher:
             self.log("want to publish, but no introducer yet", level=log.NOISY)
             return
@@ -225,6 +229,10 @@ class IntroducerClient(service.Service, Referenceable):
         for ann in self._published_announcements.values():
             self._debug_counts["outbound_message"] += 1
             self._debug_outstanding += 1
+            #from common import unsign
+            #x,y = unsign(ann)
+            #if x['nickname'] == "nickname-4":
+            #    print "->", x["service-name"], x["nickname"]
             d = self._publisher.callRemote("publish_v2", ann, self._canary)
             d.addBoth(self._debug_retired)
             d.addErrback(self._handle_v1_publisher, ann) # for_v1

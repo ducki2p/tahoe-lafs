@@ -165,6 +165,7 @@ class IntroducerService(service.MultiService, Referenceable):
                  umid="wKHgCw")
         ann_d, key = unsign(ann_s) # might raise BadSignatureError
         index = make_index(ann_d, key)
+        #print "PUB", ann_d["service-name"], ann_d["nickname"]
 
         service_name = str(ann_d["service-name"])
         if service_name == "stub_client": # for_v1
