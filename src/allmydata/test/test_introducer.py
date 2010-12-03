@@ -625,9 +625,4 @@ class DecodeFurl(unittest.TestCase):
 
 # copying more tests from old branch:
 
-#  update do_system_test() to include one (i==0) old.IntroducerClient_V1, and
-#  to have one signed publisher (i==1), and to have one client publish
-#  something that nobody cares about (i==2). Run it twice, once with a new
-#  introducer, and again with an old introducer.
-
 #  then also add Upgrade test
