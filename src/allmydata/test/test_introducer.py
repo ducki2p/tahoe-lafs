@@ -235,12 +235,15 @@ class SystemTestMixin(ServiceMixin, pollmixin.PollMixin):
             assert self.central_portnum == portnum
         tub.setLocation("localhost:%d" % self.central_portnum)
 
+V1 = "v1"; V2 = "v2"
 class SystemTest(SystemTestMixin, unittest.TestCase):
 
-    def do_system_test(self, create_introducer,
-                       check_server, check_publishing_clients):
+    def do_system_test(self, server_version):
         self.create_tub()
-        introducer = create_introducer()
+        if server_version == V1:
+            introducer = old.IntroducerService_v1()
+        else:
+            introducer = IntroducerService()
         introducer.setServiceParent(self.parent)
         iff = os.path.join(self.basedir, "introducer.furl")
         tub = self.central_tub
@@ -251,8 +254,8 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         # sixth which does which not. All 6 clients subscriber to hear about
         # storage. When the connections are fully established, all six nodes
         # should have 5 connections each.
-        self.NUM_STORAGE = 5
-        self.NUM_CLIENTS = 6
+        NUM_STORAGE = 5
+        NUM_CLIENTS = 6
 
         clients = []
         tubs = {}
@@ -260,8 +263,9 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         subscribing_clients = []
         publishing_clients = []
         privkeys = {}
+        expected_announcements = [0 for c in range(NUM_CLIENTS)]
 
-        for i in range(self.NUM_CLIENTS):
+        for i in range(NUM_CLIENTS):
             tub = Tub()
             #tub.setOption("logLocalFailures", True)
             #tub.setOption("logRemoteFailures", True)
@@ -286,9 +290,10 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 announcements[serverid] = ann_d
             c.subscribe_to("storage", got, received_announcements[c])
             subscribing_clients.append(c)
+            expected_announcements[i] += 1 # all expect a 'storage' announcement
 
             node_furl = tub.registerReference(Referenceable())
-            if i < self.NUM_STORAGE:
+            if i < NUM_STORAGE:
                 if i == 1:
                     # sign the announcement
                     privkey = privkeys[c] = ecdsa.SigningKey.generate()
@@ -301,9 +306,10 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
                 pass
 
             if i == 0:
-                # the V1 client published a 'stub_client' record (somewhat
-                # after it published the 'storage' record), so the introducer
-                # could see its version. Match that behavior.
+                # users of the V1 client were required to publish a
+                # 'stub_client' record (somewhat after they published the
+                # 'storage' record), so the introducer could see their
+                # version. Match that behavior.
                 c.publish(node_furl, "stub_client", "stub_ri_name")
 
             if i == 2:
@@ -315,60 +321,117 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
             clients.append(c)
             tubs[c] = tub
 
-        # we can't really know when a live system is idle: there may be a
-        # message on the wire. If we shut down the Tub, we can know (i.e.
-        # dead==stable). But until then, the best we can do is figure out
-        # which messages are supposed to be sent, identify a way to measure
-        # when they've been received, and poll until those measurements
-        # report completion.
 
-        def _wait_until_clients_are_idle(ign):
-            def _clients_are_idle():
+        def _wait_for_connected(ign):
+            def _connected():
+                for c in clients:
+                    if not c.connected_to_introducer():
+                        return False
+                return True
+            return self.poll(_connected)
+
+        # we watch the clients to determine when the system has settled down.
+        # Then we can look inside the server to assert things about its
+        # state.
+
+        def _wait_for_expected_announcements(ign):
+            def _got_expected_announcements():
+                for i,c in enumerate(subscribing_clients):
+                    if len(received_announcements[c]) < expected_announcements[i]:
+                        return False
+                return True
+            return self.poll(_got_expected_announcements)
+
+        # before shutting down any Tub, we'd like to know that there are no
+        # messages outstanding
+
+        def _wait_until_idle(ign):
+            def _idle():
                 for c in subscribing_clients + publishing_clients:
                     if c._debug_outstanding:
                         return False
                 if introducer._debug_outstanding:
                     return False
                 return True
-            return self.poll(_clients_are_idle)
+            return self.poll(_idle)
 
         d = defer.succeed(None)
-
-        def _wait_for_all_connections(ign):
-            def _got_all_connections():
-                for c in subscribing_clients:
-                    if len(received_announcements[c]) < self.NUM_STORAGE:
-                        return False
-                return True
-            return self.poll(_got_all_connections)
-        d.addCallback(_wait_for_all_connections)
-        d.addCallback(_wait_until_clients_are_idle)
+        d.addCallback(_wait_for_connected)
+        d.addCallback(_wait_for_expected_announcements)
+        d.addCallback(_wait_until_idle)
 
         def _check1(res):
             log.msg("doing _check1")
-            check_server(introducer)
+            dc = introducer._debug_counts
+            if server_version == V1:
+                # each storage server publishes a record, and (after its
+                # 'subscribe' has been ACKed) also publishes a "stub_client".
+                # The non-storage client (which subscribes) also publishes a
+                # stub_client. There is also one "boring" service. The number
+                # of messages is higher, because the stub_clients aren't
+                # published until after we get the 'subscribe' ack (since we
+                # don't realize that we're dealing with a v1 server [which
+                # needs stub_clients] until then), and the act of publishing
+                # the stub_client causes us to re-send all previous
+                # announcements.
+                self.failUnlessEqual(dc["inbound_message"] - dc["inbound_duplicate"],
+                                     NUM_STORAGE + NUM_CLIENTS + 1)
+            else:
+                # each storage server publishes a record. There is also one
+                # "stub_client" and one "boring"
+                self.failUnlessEqual(dc["inbound_message"], NUM_STORAGE+2)
+                self.failUnlessEqual(dc["inbound_duplicate"], 0)
+            self.failUnlessEqual(dc["inbound_update"], 0)
+            self.failUnlessEqual(dc["inbound_subscribe"], NUM_CLIENTS)
+            # the number of outbound messages is tricky.. I think it depends
+            # upon a race between the publish and the subscribe messages.
+            self.failUnless(dc["outbound_message"] > 0)
+            # each client subscribes to "storage", and each server publishes
+            self.failUnlessEqual(dc["outbound_announcements"],
+                                 NUM_STORAGE*NUM_CLIENTS)
 
-            for c in clients:
-                self.failUnless(c.connected_to_introducer())
             for c in subscribing_clients:
                 cdc = c._debug_counts
                 self.failUnless(cdc["inbound_message"])
                 self.failUnlessEqual(cdc["inbound_announcement"],
-                                     self.NUM_STORAGE)
+                                     NUM_STORAGE)
                 self.failUnlessEqual(cdc["wrong_service"], 0)
                 self.failUnlessEqual(cdc["duplicate_announcement"], 0)
                 self.failUnlessEqual(cdc["update"], 0)
                 self.failUnlessEqual(cdc["new_announcement"],
-                                     self.NUM_STORAGE)
+                                     NUM_STORAGE)
                 anns = received_announcements[c]
-                self.failUnlessEqual(len(anns), self.NUM_STORAGE)
+                self.failUnlessEqual(len(anns), NUM_STORAGE)
 
                 nodeid0 = b32decode(tubs[clients[0]].tubID.upper())
                 ann_d = anns[nodeid0]
                 nick = ann_d["nickname"]
                 self.failUnlessEqual(type(nick), unicode)
                 self.failUnlessEqual(nick, u"nickname-0")
-            check_publishing_clients(clients, publishing_clients)
+            if server_version == V1:
+                for c in publishing_clients:
+                    cdc = c._debug_counts
+                    expected = 1 # storage
+                    if c is clients[2]:
+                        expected += 1 # boring
+                    if c is not clients[0]:
+                        # the v2 client tries to call publish_v2, which fails
+                        # because the server is v1. It then re-sends
+                        # everything it has so far, plus a stub_client record
+                        expected = 2*expected + 1
+                    if c is clients[0]:
+                        # we always tell v1 client to send stub_client
+                        expected += 1
+                    self.failUnlessEqual(cdc["outbound_message"], expected)
+            else:
+                for c in publishing_clients:
+                    cdc = c._debug_counts
+                    expected = 1
+                    if c in [clients[0], # stub_client
+                             clients[2], # boring
+                             ]:
+                        expected = 2
+                    self.failUnlessEqual(cdc["outbound_message"], expected)
             log.msg("_check1 done")
         d.addCallback(_check1)
 
@@ -393,63 +456,41 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
 
         def _restart_introducer_tub(_ign):
             log.msg("restarting introducer's Tub")
-
-            dc = introducer._debug_counts
-            self.expected_count = dc["inbound_message"] + self.NUM_STORAGE+2
-            self.expected_subscribe_count = dc["inbound_subscribe"] + self.NUM_CLIENTS
-            introducer._debug0 = dc["outbound_message"]
-            for c in subscribing_clients:
-                cdc = c._debug_counts
-                c._debug0 = cdc["inbound_message"]
-
+            # reset counters
+            for i in range(NUM_CLIENTS):
+                c = subscribing_clients[i]
+                for k in c._debug_counts:
+                    c._debug_counts[k] = 0
+            for k in introducer._debug_counts:
+                introducer._debug_counts[k] = 0
+            expected_announcements[i] += 1 # new 'storage' for everyone
             self.create_tub(self.central_portnum)
             newfurl = self.central_tub.registerReference(introducer,
                                                          furlFile=iff)
             assert newfurl == self.introducer_furl
         d.addCallback(_restart_introducer_tub)
 
-        def _wait_for_introducer_reconnect():
-            # wait until:
-            #  all clients are connected
-            #  the introducer has received publish messages from all of them
-            #  the introducer has received subscribe messages from all of them
-            #  the introducer has sent (duplicate) announcements to all of them
-            #  all clients have received (duplicate) announcements
-            dc = introducer._debug_counts
-            for c in clients:
-                if not c.connected_to_introducer():
-                    return False
-            if dc["inbound_message"] < self.expected_count:
-                return False
-            if dc["inbound_subscribe"] < self.expected_subscribe_count:
-                return False
-            for c in subscribing_clients:
-                cdc = c._debug_counts
-                if cdc["inbound_message"] < c._debug0+1:
-                    return False
-            return True
-        d.addCallback(lambda res: self.poll(_wait_for_introducer_reconnect))
+        d.addCallback(_wait_for_connected)
+        d.addCallback(_wait_for_expected_announcements)
+        d.addCallback(_wait_until_idle)
         d.addCallback(lambda _ign: log.msg(" reconnected"))
-        d.addCallback(_wait_until_clients_are_idle)
 
         def _check2(res):
             log.msg("doing _check2")
             # assert that the introducer sent out new messages, one per
             # subscriber
             dc = introducer._debug_counts
-            print dc
-            #XXX
-            self.failUnlessEqual(dc["inbound_message"], 2*(self.NUM_STORAGE+2))
-            # the stub_client announcement does not count as a duplicate
-            self.failUnlessEqual(dc["inbound_duplicate"], self.NUM_STORAGE+1)
-            self.failUnlessEqual(dc["inbound_update"], 0)
-            self.failUnlessEqual(dc["outbound_message"],
-                                 introducer._debug0 + len(subscribing_clients))
-            for c in clients:
-                self.failUnless(c.connected_to_introducer())
+            self.failUnlessEqual(dc["outbound_announcements"],
+                                 NUM_STORAGE*NUM_CLIENTS)
+            self.failUnless(dc["outbound_message"] > 0)
+            self.failUnlessEqual(dc["inbound_subscribe"], NUM_CLIENTS)
             for c in subscribing_clients:
                 cdc = c._debug_counts
-                self.failUnlessEqual(cdc["duplicate_announcement"], self.NUM_STORAGE)
+                self.failUnlessEqual(cdc["inbound_message"], 1)
+                self.failUnlessEqual(cdc["inbound_announcement"], NUM_STORAGE)
+                self.failUnlessEqual(cdc["new_announcement"], 0)
+                self.failUnlessEqual(cdc["wrong_service"], 0)
+                self.failUnlessEqual(cdc["duplicate_announcement"], NUM_STORAGE)
         d.addCallback(_check2)
 
         # Then force an introducer restart, by shutting down the Tub,
@@ -466,64 +507,39 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
         def _restart_introducer(_ign):
             log.msg("restarting introducer")
             self.create_tub(self.central_portnum)
-
-            for c in subscribing_clients:
-                # record some counters for later comparison. Stash the values
-                # on the client itself, because I'm lazy.
-                cdc = c._debug_counts
-                c._debug1 = cdc["inbound_announcement"]
-                c._debug2 = cdc["inbound_message"]
-                c._debug3 = cdc["new_announcement"]
-            newintroducer = create_introducer()
-            self.expected_message_count = self.NUM_STORAGE+2
-            self.expected_announcement_count = self.NUM_STORAGE*self.NUM_CLIENTS
-            self.expected_subscribe_count = self.NUM_CLIENTS
-            newfurl = self.central_tub.registerReference(newintroducer,
+            # reset counters
+            for i in range(NUM_CLIENTS):
+                c = subscribing_clients[i]
+                for k in c._debug_counts:
+                    c._debug_counts[k] = 0
+            expected_announcements[i] += 1 # new 'storage' for everyone
+            if server_version == V1:
+                introducer = old.IntroducerService_v1()
+            else:
+                introducer = IntroducerService()
+            newfurl = self.central_tub.registerReference(introducer,
                                                          furlFile=iff)
             assert newfurl == self.introducer_furl
         d.addCallback(_restart_introducer)
 
-        def _wait_for_introducer_reconnect2():
-            # wait until:
-            #  all clients are connected
-            #  the introducer has received publish messages from all of them
-            #  the introducer has received subscribe messages from all of them
-            #  the introducer has sent announcements for everybody to everybody
-            #  all clients have received all the (duplicate) announcements
-            # at that point, the system should be quiescent
-            dc = introducer._debug_counts
-            for c in clients:
-                if not c.connected_to_introducer():
-                    return False
-            if dc["inbound_message"] < self.expected_message_count:
-                return False
-            if dc["outbound_announcements"] < self.expected_announcement_count:
-                return False
-            if dc["inbound_subscribe"] < self.expected_subscribe_count:
-                return False
-            for c in subscribing_clients:
-                cdc = c._debug_counts
-                if cdc["inbound_announcement"] < c._debug1+self.NUM_STORAGE:
-                    return False
-            return True
-        d.addCallback(lambda res: self.poll(_wait_for_introducer_reconnect2))
-        d.addCallback(_wait_until_clients_are_idle)
+        d.addCallback(_wait_for_connected)
+        d.addCallback(_wait_for_expected_announcements)
+        d.addCallback(_wait_until_idle)
 
         def _check3(res):
             log.msg("doing _check3")
-            for c in clients:
-                self.failUnless(c.connected_to_introducer())
+            dc = introducer._debug_counts
+            self.failUnlessEqual(dc["outbound_announcements"],
+                                 NUM_STORAGE*NUM_CLIENTS)
+            self.failUnless(dc["outbound_message"] > 0)
+            self.failUnlessEqual(dc["inbound_subscribe"], NUM_CLIENTS)
             for c in subscribing_clients:
                 cdc = c._debug_counts
-                self.failUnless(cdc["inbound_announcement"] > c._debug1)
-                self.failUnless(cdc["inbound_message"] > c._debug2)
-                # there should have been no new announcements
-                self.failUnlessEqual(cdc["new_announcement"], c._debug3)
-                # and the right number of duplicate ones. There were
-                # NUM_STORAGE from the servertub restart, and there should be
-                # another NUM_STORAGE now
-                self.failUnlessEqual(cdc["duplicate_announcement"],
-                                     2*self.NUM_STORAGE)
+                self.failUnless(cdc["inbound_message"] > 0)
+                self.failUnlessEqual(cdc["inbound_announcement"], NUM_STORAGE)
+                self.failUnlessEqual(cdc["new_announcement"], 0)
+                self.failUnlessEqual(cdc["wrong_service"], 0)
+                self.failUnlessEqual(cdc["duplicate_announcement"], NUM_STORAGE)
 
         d.addCallback(_check3)
         return d
@@ -532,82 +548,16 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
     def test_system_v2_server(self):
         self.basedir = "introducer/SystemTest/system_v2_server"
         os.makedirs(self.basedir)
-        return self.do_system_test(IntroducerService, self.check_v2_server,
-                                   self.check_publishing_clients_v2_server)
-    test_system_v2_server.timeout = 480 # occasionally takes longer than 350s on "draco"
-
-    def check_v2_server(self, server):
-        dc = server._debug_counts
-        # each storage server publishes a record. There is also one
-        # "stub_client" and one "boring"
-        self.failUnlessEqual(dc["inbound_message"], self.NUM_STORAGE+2)
-        self.failUnlessEqual(dc["inbound_duplicate"], 0)
-        self.failUnlessEqual(dc["inbound_update"], 0)
-        self.failUnlessEqual(dc["inbound_subscribe"], self.NUM_CLIENTS)
-        # the number of outbound messages is tricky.. I think it depends
-        # upon a race between the publish and the subscribe messages.
-        self.failUnless(dc["outbound_message"] > 0)
-        # each client subscribes to "storage", and each server publishes
-        self.failUnlessEqual(dc["outbound_announcements"],
-                             self.NUM_STORAGE*self.NUM_CLIENTS)
-
-    def check_publishing_clients_v2_server(self, clients, publishing_clients):
-        for c in publishing_clients:
-            cdc = c._debug_counts
-            expected = 1
-            if c in [clients[0], # stub_client
-                     clients[2], # boring
-                     ]:
-                expected = 2
-            self.failUnlessEqual(cdc["outbound_message"], expected)
-
+        return self.do_system_test(V2)
+    test_system_v2_server.timeout = 480
+    # occasionally takes longer than 350s on "draco"
 
     def test_system_v1_server(self):
         self.basedir = "introducer/SystemTest/system_v1_server"
         os.makedirs(self.basedir)
-        print
-        return self.do_system_test(old.IntroducerService_v1,
-                                   self.check_v1_server,
-                                   self.check_publishing_clients_v1_server)
-    test_system_v1_server.timeout = 480 # occasionally takes longer than 350s on "draco"
-
-    def check_v1_server(self, server):
-        dc = server._debug_counts
-        # each storage server publishes a record, and (after its 'subscribe'
-        # has been ACKed) also publishes a "stub_client". The non-storage
-        # client (which subscribes) also publishes a stub_client. There is
-        # also one "boring" service. The number of messages is higher,
-        # because the stub_clients aren't published until after we get the
-        # 'subscribe' ack (since we don't realize that we're dealing with a
-        # v1 server [which needs stub_clients] until then), and the act of
-        # publishing the stub_client causes us to re-send all previous
-        # announcements.
-        self.failUnlessEqual(dc["inbound_message"] - dc["inbound_duplicate"],
-                             self.NUM_STORAGE + self.NUM_CLIENTS + 1)
-        self.failUnlessEqual(dc["inbound_update"], 0)
-        self.failUnlessEqual(dc["inbound_subscribe"], self.NUM_CLIENTS)
-        # the number of outbound messages is tricky.. I think it depends
-        # upon a race between the publish and the subscribe messages.
-        self.failUnless(dc["outbound_message"] > 0)
-        # each client subscribes to "storage", and each server publishes
-        self.failUnlessEqual(dc["outbound_announcements"],
-                             self.NUM_STORAGE*self.NUM_CLIENTS)
-
-    def check_publishing_clients_v1_server(self, clients, publishing_clients):
-        for c in publishing_clients:
-            cdc = c._debug_counts
-            expected = 1 # storage
-            if c is clients[2]:
-                expected += 1 # boring
-            if c is not clients[0]:
-                # the v2 client tries to call publish_v2, which fails because
-                # the server is v1. It then re-sends everything it has so
-                # far, plus a stub_client record
-                expected = 2*expected + 1
-            if c is clients[0]:
-                # we always tell v1 client to send stub_client
-                expected += 1
-            self.failUnlessEqual(cdc["outbound_message"], expected)
+        return self.do_system_test(V1)
+    test_system_v1_server.timeout = 480
+    # occasionally takes longer than 350s on "draco"
 
 
 class TooNewServer(IntroducerService):
