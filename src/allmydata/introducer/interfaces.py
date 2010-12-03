@@ -78,13 +78,17 @@ class IIntroducerClient(Interface):
     publish their services to the rest of the world, and I help them learn
     about services available on other nodes."""
 
-    def publish(furl, service_name, remoteinterface_name):
+    def publish(furl, service_name, remoteinterface_name,
+                signing_key=None):
         """Once you call this, I will tell the world that the Referenceable
         available at FURL is available to provide a service named
         SERVICE_NAME. The precise definition of the service being provided is
         identified by the Foolscap 'remote interface name' in the last
         parameter: this is supposed to be a globally-unique string that
-        identifies the RemoteInterface that is implemented."""
+        identifies the RemoteInterface that is implemented.
+
+        If signing_key= is set to an instance of ecdsa.SigningKey, it will be
+        used to sign the announcement."""
 
     def subscribe_to(service_name, callback, *args, **kwargs):
         """Call this if you will eventually want to use services with the
