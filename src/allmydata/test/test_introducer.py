@@ -559,6 +559,157 @@ class SystemTest(SystemTestMixin, unittest.TestCase):
     test_system_v1_server.timeout = 480
     # occasionally takes longer than 350s on "draco"
 
+from allmydata.util import base32
+class FakeRemoteReference:
+    def notifyOnDisconnect(self, *args, **kwargs): pass
+    def getRemoteTubID(self): return "62ubehyunnyhzs7r6vdonnm2hpi52w6y"
+
+class ClientInfo(unittest.TestCase):
+    def test_client_v2(self):
+        introducer = IntroducerService()
+        tub = introducer_furl = None
+        app_versions = {"whizzy": "fizzy"}
+        client_v2 = IntroducerClient(tub, introducer_furl, u"nick-v2",
+                                     "my_version", "oldest", app_versions)
+        #furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:0/swissnum"
+        #ann_s = client_v2.create_announcement(furl1, "storage", "RIStorage")
+        #introducer.remote_publish_v2(ann_s, Referenceable())
+        subscriber = FakeRemoteReference()
+        introducer.remote_subscribe_v2(subscriber, "storage",
+                                       client_v2._my_subscriber_info)
+        s = introducer.get_subscribers()
+        self.failUnlessEqual(len(s), 1)
+        sn, when, si, rref = s[0]
+        self.failUnlessIdentical(rref, subscriber)
+        self.failUnlessEqual(sn, "storage")
+        self.failUnlessEqual(si["version"], 0)
+        self.failUnlessEqual(si["oldest-supported"], "oldest")
+        self.failUnlessEqual(si["app-versions"], app_versions)
+        self.failUnlessEqual(si["nickname"], u"nick-v2")
+        self.failUnlessEqual(si["my-version"], "my_version")
+
+    def test_client_v1(self):
+        introducer = IntroducerService()
+        tub = introducer_furl = None
+        client_v1 = old.IntroducerClient_v1(tub, introducer_furl, u"nick-v1",
+                                            "my_version", "oldest")
+        subscriber = FakeRemoteReference()
+        introducer.remote_subscribe(subscriber, "storage")
+        # the v1 subscribe interface had no subscriber_info: that was usually
+        # sent in a separate stub_client pseudo-announcement
+        s = introducer.get_subscribers()
+        self.failUnlessEqual(len(s), 1)
+        sn, when, si, rref = s[0]
+        # rref will be a SubscriberAdapter_v1 around the real subscriber
+        self.failUnlessIdentical(rref.original, subscriber)
+        self.failUnlessEqual(si, None) # not known yet
+        self.failUnlessEqual(sn, "storage")
+
+        # now submit the stub_client announcement
+        furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:0/swissnum"
+        ann = (furl1, "stub_client", "RIStubClient",
+               u"nick-v1".encode("utf-8"), "my_version", "oldest")
+        introducer.remote_publish(ann)
+        # the server should correlate the two
+        s = introducer.get_subscribers()
+        self.failUnlessEqual(len(s), 1)
+        sn, when, si, rref = s[0]
+        self.failUnlessIdentical(rref.original, subscriber)
+        self.failUnlessEqual(sn, "storage")
+
+        self.failUnlessEqual(si["version"], 0)
+        self.failUnlessEqual(si["oldest-supported"], "oldest")
+        # v1 announcements do not contain app-versions
+        self.failUnlessEqual(si["app-versions"], {})
+        self.failUnlessEqual(si["nickname"], u"nick-v1")
+        self.failUnlessEqual(si["my-version"], "my_version")
+
+        # a subscription that arrives after the stub_client announcement
+        # should be correlated too
+        subscriber2 = FakeRemoteReference()
+        introducer.remote_subscribe(subscriber2, "thing2")
+
+        s = introducer.get_subscribers()
+        subs = dict([(sn, (si,rref)) for sn, when, si, rref in s])
+        self.failUnlessEqual(len(subs), 2)
+        (si,rref) = subs["thing2"]
+        self.failUnlessIdentical(rref.original, subscriber2)
+        self.failUnlessEqual(si["version"], 0)
+        self.failUnlessEqual(si["oldest-supported"], "oldest")
+        # v1 announcements do not contain app-versions
+        self.failUnlessEqual(si["app-versions"], {})
+        self.failUnlessEqual(si["nickname"], u"nick-v1")
+        self.failUnlessEqual(si["my-version"], "my_version")
+
+class Announcements(unittest.TestCase):
+    def test_client_v2_unsigned(self):
+        introducer = IntroducerService()
+        tub = introducer_furl = None
+        app_versions = {"whizzy": "fizzy"}
+        client_v2 = IntroducerClient(tub, introducer_furl, u"nick-v2",
+                                     "my_version", "oldest", app_versions)
+        furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:0/swissnum"
+        serverid = base32.a2b("62ubehyunnyhzs7r6vdonnm2hpi52w6y")
+        ann_s0 = client_v2.create_announcement(furl1, "storage", "RIStorage")
+        canary0 = Referenceable()
+        introducer.remote_publish_v2(ann_s0, canary0)
+        a = introducer.get_announcements()
+        self.failUnlessEqual(len(a), 1)
+        (index, (ann_s, canary, ann_d, when)) = a.items()[0]
+        self.failUnlessIdentical(canary, canary0)
+        self.failUnlessEqual(index, ("storage", serverid))
+        self.failUnlessEqual(ann_d["app-versions"], app_versions)
+        self.failUnlessEqual(ann_d["nickname"], u"nick-v2")
+        self.failUnlessEqual(ann_d["service-name"], "storage")
+        self.failUnlessEqual(ann_d["my-version"], "my_version")
+        self.failUnlessEqual(ann_d["FURL"], furl1)
+
+    def test_client_v2_signed(self):
+        introducer = IntroducerService()
+        tub = introducer_furl = None
+        app_versions = {"whizzy": "fizzy"}
+        client_v2 = IntroducerClient(tub, introducer_furl, u"nick-v2",
+                                     "my_version", "oldest", app_versions)
+        furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:0/swissnum"
+        serverid = base32.a2b("62ubehyunnyhzs7r6vdonnm2hpi52w6y")
+        sk = ecdsa.SigningKey.generate()
+        pk = sk.get_verifying_key()
+        pks = pk.to_string()
+        ann_s0 = client_v2.create_announcement(furl1, "storage", "RIStorage", sk)
+        canary0 = Referenceable()
+        introducer.remote_publish_v2(ann_s0, canary0)
+        a = introducer.get_announcements()
+        self.failUnlessEqual(len(a), 1)
+        (index, (ann_s, canary, ann_d, when)) = a.items()[0]
+        self.failUnlessIdentical(canary, canary0)
+        self.failUnlessEqual(index, ("storage", pks)) # index is pubkey string
+        self.failUnlessEqual(ann_d["app-versions"], app_versions)
+        self.failUnlessEqual(ann_d["nickname"], u"nick-v2")
+        self.failUnlessEqual(ann_d["service-name"], "storage")
+        self.failUnlessEqual(ann_d["my-version"], "my_version")
+        self.failUnlessEqual(ann_d["FURL"], furl1)
+
+    def test_client_v1(self):
+        introducer = IntroducerService()
+        tub = introducer_furl = None
+
+        furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:0/swissnum"
+        serverid = base32.a2b("62ubehyunnyhzs7r6vdonnm2hpi52w6y")
+        ann = (furl1, "storage", "RIStorage",
+               u"nick-v1".encode("utf-8"), "my_version", "oldest")
+        introducer.remote_publish(ann)
+
+        a = introducer.get_announcements()
+        self.failUnlessEqual(len(a), 1)
+        (index, (ann_s, canary, ann_d, when)) = a.items()[0]
+        self.failUnlessEqual(canary, None)
+        self.failUnlessEqual(index, ("storage", serverid))
+        self.failUnlessEqual(ann_d["app-versions"], {})
+        self.failUnlessEqual(ann_d["nickname"], u"nick-v1".encode("utf-8"))
+        self.failUnlessEqual(ann_d["service-name"], "storage")
+        self.failUnlessEqual(ann_d["my-version"], "my_version")
+        self.failUnlessEqual(ann_d["FURL"], furl1)
+
 
 class TooNewServer(IntroducerService):
     VERSION = { "http://allmydata.org/tahoe/protocols/introducer/v999":
