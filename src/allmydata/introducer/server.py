@@ -169,38 +169,7 @@ class IntroducerService(service.MultiService, Referenceable):
 
         service_name = str(ann_d["service-name"])
         if service_name == "stub_client": # for_v1
-            # There might be a v1 subscriber for whom this is a stub_client.
-            # We might have received the subscription before the stub_client
-            # announcement, in which case we now need to fix up the record in
-            # self._subscriptions .
-
-            # record it for later, in case the stub_client arrived before the
-            # subscription
-            subscriber_info = self._get_subscriber_info_from_ann_d(ann_d)
-            ann_tubid = index[0]
-            self._stub_client_announcements[ann_tubid] = subscriber_info
-
-            lp2 = self.log("stub_client announcement, "
-                           "looking for matching subscriber",
-                           parent=lp, level=log.NOISY, umid="BTywDg")
-
-            s = self._subscribers.get(service_name, {})
-            for (subscriber, info) in s.items():
-                # we correlate these by looking for a subscriber whose tubid
-                # matches this announcement
-                sub_tubid = base32.a2b(subscriber.getRemoteTubID()) # binary
-                if sub_tubid == ann_tubid:
-                    self.log(format="found a match, nodeid=%(nodeid)s",
-                             nodeid=idlib.nodeid_b2a(sub_tubid),
-                             level=log.NOISY, parent=lp2, umid="xsWs1A")
-                    # found a match. Does it need info?
-                    if not info[0]:
-                        self.log(format="replacing info",
-                                 level=log.NOISY, parent=lp2, umid="m5kxwA")
-                        # yup
-                        s[subscriber] = (subscriber_info, info[1])
-            # and we don't remember or announce stub_clients beyond what we
-            # need to get the subscriber_info set up
+            self._attach_stub_client(ann_d, index, lp)
             return
 
         if index in self._announcements:
@@ -231,6 +200,41 @@ class IntroducerService(service.MultiService, Referenceable):
                          format="subscriber errored on announcement %(ann)s",
                          ann=ann_s, facility="tahoe.introducer",
                          level=log.UNUSUAL, umid="jfGMXQ")
+
+    def _attach_stub_client(self, ann_d, index, lp):
+        # There might be a v1 subscriber for whom this is a stub_client.
+        # We might have received the subscription before the stub_client
+        # announcement, in which case we now need to fix up the record in
+        # self._subscriptions .
+
+        # record it for later, in case the stub_client arrived before the
+        # subscription
+        subscriber_info = self._get_subscriber_info_from_ann_d(ann_d)
+        ann_tubid = index[1]
+        self._stub_client_announcements[ann_tubid] = subscriber_info
+
+        lp2 = self.log("stub_client announcement, "
+                       "looking for matching subscriber",
+                       parent=lp, level=log.NOISY, umid="BTywDg")
+
+        for sn in self._subscribers:
+            s = self._subscribers[sn]
+            for (subscriber, info) in s.items():
+                # we correlate these by looking for a subscriber whose tubid
+                # matches this announcement
+                sub_tubid = base32.a2b(subscriber.getRemoteTubID()) # binary
+                if sub_tubid == ann_tubid:
+                    self.log(format="found a match, nodeid=%(nodeid)s",
+                             nodeid=idlib.nodeid_b2a(sub_tubid),
+                             level=log.NOISY, parent=lp2, umid="xsWs1A")
+                    # found a match. Does it need info?
+                    if not info[0]:
+                        self.log(format="replacing info",
+                                 level=log.NOISY, parent=lp2, umid="m5kxwA")
+                        # yup
+                        s[subscriber] = (subscriber_info, info[1])
+            # and we don't remember or announce stub_clients beyond what we
+            # need to get the subscriber_info set up
 
     def _get_subscriber_info_from_ann_d(self, ann_d): # for_v1
         sinfo = { "version": ann_d["version"],
