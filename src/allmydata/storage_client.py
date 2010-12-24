@@ -29,9 +29,9 @@ the foolscap-based server implemented in src/allmydata/storage/*.py .
 # 6: implement other sorts of IStorageClient classes: S3, etc
 
 
-import time
+import time, simplejson
 from zope.interface import implements, Interface
-from foolscap.api import eventually
+from foolscap.api import eventually, Referenceable
 from allmydata.interfaces import IStorageBroker
 from allmydata.util import idlib, log
 from allmydata.util.assertutil import _assert, precondition
@@ -62,10 +62,11 @@ class StorageFarmBroker:
     I'm also responsible for subscribing to the IntroducerClient to find out
     about new servers as they are announced by the Introducer.
     """
-    def __init__(self, tub, permute_peers):
+    def __init__(self, tub, permute_peers, client_key=None):
         self.tub = tub
         assert permute_peers # False not implemented yet
         self.permute_peers = permute_peers
+        self.client_key = client_key
         # self.descriptors maps serverid -> IServerDescriptor, and keeps
         # track of all the storage servers that we've heard about. Each
         # descriptor manages its own Reconnector, and will give us a
@@ -97,7 +98,8 @@ class StorageFarmBroker:
             del self.descriptors[serverid]
             old.stop_connecting()
             # now we forget about them and start using the new one
-        dsc = NativeStorageClientDescriptor(serverid, ann_d)
+        dsc = NativeStorageClientDescriptor(serverid, ann_d, self.tub,
+                                            self.client_key)
         self.descriptors[serverid] = dsc
         dsc.start_connecting(self.tub, self._trigger_connections)
         # the descriptor will manage their own Reconnector, and each time we
@@ -160,7 +162,7 @@ class IServerDescriptor(Interface):
     def get_rref():
         pass
 
-class NativeStorageClientDescriptor:
+class NativeStorageClientDescriptor(Referenceable):
     """I hold information about a storage server that we want to connect to.
     If we are connected, I hold the RemoteReference, their host address, and
     the their version information. I remember information about when we were
@@ -187,9 +189,11 @@ class NativeStorageClientDescriptor:
         "application-version": "unknown: no get_version()",
         }
 
-    def __init__(self, serverid, ann_d, min_shares=1):
+    def __init__(self, serverid, ann_d, tub, client_key=None, min_shares=1):
         self.serverid = serverid
         self.announcement = ann_d
+        self.tub = tub
+        self.client_key = client_key
         self.min_shares = min_shares
 
         self.serverid_s = idlib.shortnodeid_b2a(self.serverid)
@@ -239,11 +243,30 @@ class NativeStorageClientDescriptor:
                 serverid=self.serverid_s, version=rref.version,
                 facility="tahoe.storage_broker", umid="SWmJYg",
                 level=log.NOISY, parent=lp)
+        if "accounting-v1" not in rref.version or not self.client_key:
+            self.last_connect_time = time.time()
+            self.remote_host = rref.getPeer()
+            self.rref = rref
+            rref.notifyOnDisconnect(self._lost)
+            return
+        # the RIStorageServer we're talking to can upgrade us to a real
+        # Account. We are the receiver.
+        me = self.tub.registerReferenceable(self)
+        msg_d = {"please-give-Account-to-rxFURL": me}
+        msg = simplejson.dumps(msg_d).encode("utf-8")
+        sk = self.client_key
+        sig = sk.sign(msg)
+        pubkey_s = sk.get_verifying_key().to_string() # think about ascii
+        d = rref.callRemote("get_account", msg, sig, pubkey_s)
+        return d
 
+    def remote_account(self, account):
+        # now *this* we can use
         self.last_connect_time = time.time()
-        self.remote_host = rref.getPeer()
-        self.rref = rref
-        rref.notifyOnDisconnect(self._lost)
+        self.remote_host = account.getPeer()
+        self.rref = account
+        account.notifyOnDisconnect(self._lost)
+
 
     def get_rref(self):
         return self.rref
