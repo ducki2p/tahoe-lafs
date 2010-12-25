@@ -33,6 +33,26 @@ def make_keypair():
     pubkey_vs = "pub-v0-%s" % base32.b2a(pubkey.to_string())
     return privkey_vs, pubkey_vs
 
+def parse_privkey(privkey_vs):
+    from allmydata.util.ecdsa import SigningKey, NIST192p
+    from allmydata.util import base32
+    if not privkey_vs.startswith("priv-v0-"):
+        raise ValueError("private key must look like 'priv-v0-...', not '%s'" % privkey_vs)
+    privkey_s = privkey_vs[len("priv-v0-"):]
+    sk = SigningKey.from_string(base32.a2b(privkey_s), curve=NIST192p)
+    pubkey = sk.get_verifying_key()
+    pubkey_vs = "pub-v0-%s" % base32.b2a(pubkey.to_string())
+    return sk, pubkey_vs
+
+def parse_pubkey(pubkey_vs):
+    from allmydata.util.ecdsa import VerifyingKey, NIST192p
+    from allmydata.util import base32
+    if not pubkey_vs.startswith("pub-v0-"):
+        raise ValueError("public key must look like 'pub-v0-...', not '%s'" % pubkey_vs)
+    pubkey_s = pubkey_vs[len("pub-v0-"):]
+    vk = VerifyingKey.from_string(base32.a2b(pubkey_s), curve=NIST192p)
+    return vk
+
 def print_keypair(options):
     out = options.stdout
     privkey_vs, pubkey_vs = make_keypair()
