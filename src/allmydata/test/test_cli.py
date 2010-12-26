@@ -7,7 +7,7 @@ import simplejson
 
 from mock import patch
 
-from allmydata.util import fileutil, hashutil, base32
+from allmydata.util import fileutil, hashutil, base32, keyutil
 from allmydata import uri
 from allmydata.immutable import upload
 from allmydata.dirnode import normalize
@@ -1029,7 +1029,7 @@ class Admin(unittest.TestCase):
         return d
 
     def test_derive_pubkey(self):
-        priv1,pub1 = admin.make_keypair()
+        priv1,pub1 = keyutil.make_keypair()
         d = self.do_cli("admin", "derive-pubkey", priv1)
         def _done( (stdout, stderr) ):
             lines = stdout.split("\n")
