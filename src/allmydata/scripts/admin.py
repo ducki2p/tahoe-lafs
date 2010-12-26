@@ -60,12 +60,8 @@ class AdminCommand(usage.Options):
     def getSynopsis(self):
         return "Usage: tahoe admin SUBCOMMAND"
     def getUsage(self, width=None):
-        #t = usage.Options.getUsage(self, width)
-        t = """
-Subcommands:
-    tahoe admin generate-keypair    Generate a public/private keypair,
-                                    write to stdout.
-
+        t = usage.Options.getUsage(self, width)
+        t += """
 Please run e.g. 'tahoe admin generate-keypair --help' for more details on
 each subcommand.
 """
