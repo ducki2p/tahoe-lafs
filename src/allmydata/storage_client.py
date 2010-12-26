@@ -62,11 +62,12 @@ class StorageFarmBroker:
     I'm also responsible for subscribing to the IntroducerClient to find out
     about new servers as they are announced by the Introducer.
     """
-    def __init__(self, tub, permute_peers, client_key=None):
+    def __init__(self, tub, permute_peers, client_key=None, client_info={}):
         self.tub = tub
         assert permute_peers # False not implemented yet
         self.permute_peers = permute_peers
         self.client_key = client_key
+        self.client_info = client_info
         # self.descriptors maps serverid -> IServerDescriptor, and keeps
         # track of all the storage servers that we've heard about. Each
         # descriptor manages its own Reconnector, and will give us a
@@ -99,7 +100,8 @@ class StorageFarmBroker:
             old.stop_connecting()
             # now we forget about them and start using the new one
         dsc = NativeStorageClientDescriptor(serverid, ann_d, self.tub,
-                                            self.client_key)
+                                            self.client_key,
+                                            client_info=self.client_info)
         self.descriptors[serverid] = dsc
         dsc.start_connecting(self.tub, self._trigger_connections)
         # the descriptor will manage their own Reconnector, and each time we
@@ -189,12 +191,14 @@ class NativeStorageClientDescriptor(Referenceable):
         "application-version": "unknown: no get_version()",
         }
 
-    def __init__(self, serverid, ann_d, tub, client_key=None, min_shares=1):
+    def __init__(self, serverid, ann_d, tub, client_key=None, min_shares=1,
+                 client_info={}):
         self.serverid = serverid
         self.announcement = ann_d
         self.tub = tub
         self.client_key = client_key
         self.min_shares = min_shares
+        self.client_info = client_info
 
         self.serverid_s = idlib.shortnodeid_b2a(self.serverid)
         self.announcement_time = time.time()
@@ -277,6 +281,8 @@ class NativeStorageClientDescriptor(Referenceable):
         def _got_message(msg):
             print "_got_message", msg
         account.callRemote("get_client_message").addCallback(_got_message).addErrback(log.err)
+        nickname = self.client_info.get("nickname", u"<none>")
+        account.callRemoteOnly("set_nickname", nickname)
 
 
     def get_rref(self):
