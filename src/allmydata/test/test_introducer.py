@@ -590,9 +590,6 @@ class ClientInfo(unittest.TestCase):
 
     def test_client_v1(self):
         introducer = IntroducerService()
-        tub = introducer_furl = None
-        client_v1 = old.IntroducerClient_v1(tub, introducer_furl, u"nick-v1",
-                                            "my_version", "oldest")
         subscriber = FakeRemoteReference()
         introducer.remote_subscribe(subscriber, "storage")
         # the v1 subscribe interface had no subscriber_info: that was usually
@@ -671,7 +668,6 @@ class Announcements(unittest.TestCase):
         client_v2 = IntroducerClient(tub, introducer_furl, u"nick-v2",
                                      "my_version", "oldest", app_versions)
         furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:0/swissnum"
-        serverid = base32.a2b("62ubehyunnyhzs7r6vdonnm2hpi52w6y")
         sk = ecdsa.SigningKey.generate()
         pk = sk.get_verifying_key()
         pks = pk.to_string()
@@ -691,7 +687,6 @@ class Announcements(unittest.TestCase):
 
     def test_client_v1(self):
         introducer = IntroducerService()
-        tub = introducer_furl = None
 
         furl1 = "pb://62ubehyunnyhzs7r6vdonnm2hpi52w6y@127.0.0.1:0/swissnum"
         serverid = base32.a2b("62ubehyunnyhzs7r6vdonnm2hpi52w6y")
