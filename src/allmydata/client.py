@@ -16,7 +16,7 @@ from allmydata.immutable.upload import Uploader
 from allmydata.immutable.offloaded import Helper
 from allmydata.control import ControlServer
 from allmydata.introducer.client import IntroducerClient
-from allmydata.util import hashutil, base32, pollmixin, log
+from allmydata.util import hashutil, base32, pollmixin, log, keyutil
 from allmydata.util.encodingutil import get_filesystem_encoding
 from allmydata.util.abbreviate import parse_abbreviated_size
 from allmydata.util.time_format import parse_duration, parse_date
@@ -302,12 +302,11 @@ class Client(node.Node, pollmixin.PollMixin):
         self.init_nodemaker()
 
     def init_client_storage_broker(self):
-        from allmydata.scripts.admin import make_keypair, parse_privkey
         def _make_key():
-            sk_vs,vk_vs = make_keypair()
+            sk_vs,vk_vs = keyutil.make_keypair()
             return sk_vs # priv-v0-BASE32
         sk_vs = self.get_or_create_private_config("client_key", _make_key)
-        self.client_key = parse_privkey(sk_vs) # (sk, vk_vs)
+        self.client_key = keyutil.parse_privkey(sk_vs) # (sk, vk_vs)
         client_info = {"nickname": unicode(self.nickname)}
         # create a StorageFarmBroker object, for use by Uploader/Downloader
         # (and everybody else who wants to use storage servers)
