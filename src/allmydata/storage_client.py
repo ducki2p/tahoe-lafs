@@ -254,6 +254,7 @@ class NativeStorageClientDescriptor(Referenceable):
             self.last_connect_time = time.time()
             self.remote_host = rref.getPeer()
             self.rref = rref
+            self.accounting_enabled = False
             rref.notifyOnDisconnect(self._lost)
             return
         print "doing upgrade"
@@ -277,6 +278,7 @@ class NativeStorageClientDescriptor(Referenceable):
         self.last_connect_time = time.time()
         self.remote_host = account.getPeer()
         self.rref = account
+        self.accounting_enabled = True
         account.notifyOnDisconnect(self._lost)
         def _got_message(msg):
             print "_got_message", msg
@@ -303,6 +305,11 @@ class NativeStorageClientDescriptor(Referenceable):
     def try_to_connect(self):
         # used when the broker wants us to hurry up
         self._reconnector.reset()
+
+    def get_claimed_usage(self):
+        if self.accounting_enabled:
+            return self.rref.callRemote("get_current_usage")
+        return defer.succeed(None)
 
 class UnknownServerTypeError(Exception):
     pass
