@@ -155,6 +155,10 @@ class Node(service.MultiService):
             # N.B.: this is in seconds, so use "1800" to get 30min
             self.tub.setOption("disconnectTimeout", int(disconnect_timeout_s))
 
+        http_proxy = self.get_config("node", "http_proxy", "")
+        if http_proxy:
+            self.tub.setOption("http-proxy", http_proxy)
+
         self.nodeid = b32decode(self.tub.tubID.upper()) # binary format
         self.write_config("my_nodeid", b32encode(self.nodeid).lower() + "\n")
         self.short_nodeid = b32encode(self.nodeid).lower()[:8] # ready for printing
