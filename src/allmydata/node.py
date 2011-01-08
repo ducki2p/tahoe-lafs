@@ -258,7 +258,11 @@ class Node(service.MultiService):
 
         service.MultiService.startService(self)
         d = defer.succeed(None)
-        d.addCallback(lambda res: iputil.get_local_addresses_async())
+        location = self.get_config("node", "tub.location", None)
+        if location == "":
+            d.addCallback(lambda res: ['127.0.0.1'])
+        else:
+            d.addCallback(lambda res: iputil.get_local_addresses_async())
         d.addCallback(self._setup_tub)
         def _ready(res):
             self.log("%s running" % self.NODETYPE)
@@ -333,6 +337,8 @@ class Node(service.MultiService):
         base_location = ",".join([ "%s:%d" % (addr, portnum)
                                    for addr in local_addresses ])
         location = self.get_config("node", "tub.location", base_location)
+        if location == "":
+            location = base_location
         self.log("Tub location set to %s" % location)
         self.tub.setLocation(location)
 
