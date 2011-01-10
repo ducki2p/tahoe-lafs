@@ -1,5 +1,8 @@
 
 import os, stat, sys, time
+
+from mock import patch
+
 from twisted.trial import unittest
 from twisted.internet import defer
 from twisted.python import log
@@ -29,6 +32,36 @@ class TestCase(testutil.SignalMixin, unittest.TestCase):
         d = defer.succeed(None)
         d.addCallback(lambda res: self.parent.stopService())
         d.addCallback(flushEventualQueue)
+        return d
+
+    # XXX should use mock decorator from #1301
+    def test_anonymous_location(self):
+        patcher = patch('allmydata.util.iputil.get_local_addresses_async')
+        mock = patcher.__enter__()
+        mock.return_value = ["1.2.3.4"]
+
+        basedir = "test_node/test_anonymous_location"
+        fileutil.make_dirs(basedir)
+        f = open(os.path.join(basedir, 'tahoe.cfg'), 'wt')
+        f.write("[node]\n")
+        f.write("tub.location = \n")
+        f.close()
+
+        n = TestNode(basedir)
+        n.setServiceParent(self.parent)
+        d = n.when_tub_ready()
+
+        def _check_addresses(ignored_result):
+            furl = n.tub.registerReference(n)
+            self.failIf("1.2.3.4" in furl, furl)
+            self.failUnless("127.0.0.1" in furl, furl)
+
+        d.addCallback(_check_addresses)
+
+        def cleanup(res):
+            patcher.__exit__()
+            return res
+        d.addBoth(cleanup)
         return d
 
     def test_location(self):
