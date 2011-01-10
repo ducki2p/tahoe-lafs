@@ -31,6 +31,17 @@ class TestCase(testutil.SignalMixin, unittest.TestCase):
         d.addCallback(flushEventualQueue)
         return d
 
+    def test_http_proxy(self):
+        basedir = "test_node/test_http_proxy"
+        fileutil.make_dirs(basedir)
+        f = open(os.path.join(basedir, 'tahoe.cfg'), 'wt')
+        f.write("[node]\n")
+        f.write("http_proxy = 127.0.0.1:8888\n")
+        f.close()
+
+        n = TestNode(basedir)
+        self.failUnlessEqual(n.tub.options['http-proxy'], "127.0.0.1:8888")
+
     def test_location(self):
         basedir = "test_node/test_location"
         fileutil.make_dirs(basedir)
